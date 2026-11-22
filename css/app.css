@@ -23,10 +23,8 @@
 
 /* Schermo intero: la pagina è ferma, scorre solo il contenuto (anche sotto le parti sfocate) */
 html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); }
-/* --gap: fascia in fondo allo schermo che iOS, nell'app installata, lascia fuori dall'area utile
-   (misurata in app.js; 0 dove non serve). Pagina e parti fisse si allungano fin lì. */
 body {
-  position: fixed; top: 0; left: 0; right: 0; bottom: calc(-1 * var(--gap, 0px)); height: auto;
+  position: fixed; inset: 0;
   font: 16px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
   -webkit-text-size-adjust: 100%;
 }
@@ -41,7 +39,7 @@ body.has-timer main { padding-bottom: calc(var(--above-tabs) + 120px); }
   -webkit-mask-image: linear-gradient(#000 75%, transparent); mask-image: linear-gradient(#000 75%, transparent);
 }
 .botfade {
-  position: fixed; left: 0; right: 0; bottom: calc(-1 * var(--gap, 0px)); height: calc(var(--above-tabs) + 26px); z-index: 18; pointer-events: none;
+  position: fixed; left: 0; right: 0; bottom: 0; height: calc(var(--above-tabs) + 26px); z-index: 18; pointer-events: none;
   background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--bg) 88%, transparent) 60%);
 }
 
@@ -77,7 +75,7 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 0;
 
 /* Barra in basso a pillola, sfocata, staccata dai bordi */
 .tabs {
-  position: fixed; left: 14px; right: 14px; bottom: calc(var(--tabs-bottom) - var(--gap, 0px)); z-index: 20; max-width: 520px; margin: 0 auto;
+  position: fixed; left: 14px; right: 14px; bottom: var(--tabs-bottom); z-index: 20; max-width: 520px; margin: 0 auto;
   height: var(--tabh); padding: 5px; border-radius: 34px;
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
   background: color-mix(in srgb, var(--card) 70%, transparent); backdrop-filter: blur(22px) saturate(1.6); -webkit-backdrop-filter: blur(22px) saturate(1.6);
@@ -216,7 +214,7 @@ button.back { padding: 4px 2px; font-weight: 600; }
 
 /* Timer e notifiche */
 .timer {
-  position: fixed; left: 14px; right: 14px; bottom: calc(var(--above-tabs) + 10px - var(--gap, 0px)); z-index: 30;
+  position: fixed; left: 14px; right: 14px; bottom: calc(var(--above-tabs) + 10px); z-index: 30;
   max-width: 520px; margin: 0 auto; background: var(--text); color: var(--bg); border-radius: 22px; padding: 10px 12px 10px 18px;
   display: flex; align-items: center; gap: 10px; box-shadow: 0 10px 28px rgb(0 0 0 / .25);
 }
@@ -226,7 +224,7 @@ button.back { padding: 4px 2px; font-weight: 600; }
 .timer.end { background: var(--l1); color: #08231b; }
 .timer.end button { color: #08231b; background: rgb(255 255 255 / .45); font-weight: 700; }
 .toast {
-  position: fixed; left: 14px; right: 14px; bottom: calc(var(--above-tabs) + 82px - var(--gap, 0px)); z-index: 40; max-width: 520px; margin: 0 auto;
+  position: fixed; left: 14px; right: 14px; bottom: calc(var(--above-tabs) + 82px); z-index: 40; max-width: 520px; margin: 0 auto;
   background: var(--text); color: var(--bg); border-radius: 16px; padding: 12px 16px; display: flex; align-items: center; gap: 10px;
 }
 .toast span { flex: 1; }
@@ -273,7 +271,7 @@ button.back { padding: 4px 2px; font-weight: 600; }
 .filebtn { justify-content: center; background: var(--card2); border-radius: 10px; min-height: 44px; cursor: pointer; }
 
 /* Scheda a comparsa (tenendo premuto un esercizio) */
-.sheet { position: fixed; top: 0; left: 0; right: 0; bottom: calc(-1 * var(--gap, 0px)); z-index: 60; display: flex; align-items: flex-end; justify-content: center; }
+.sheet { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-end; justify-content: center; }
 .sheet-bg { position: absolute; inset: 0; background: rgb(0 0 0 / .38); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); animation: fadeIn .2s ease-out; }
 .sheet-card { position: relative; width: 100%; max-width: 560px; max-height: 84%; overflow-y: auto; overscroll-behavior: contain;
   background: var(--card); border-radius: 22px 22px 0 0; padding: 18px 16px calc(env(safe-area-inset-bottom) + 20px); box-shadow: 0 -8px 30px rgb(0 0 0 / .2); animation: sheetUp .3s cubic-bezier(.2, .8, .2, 1); }

@@ -815,7 +815,7 @@ function viewImpostazioni() {
         <button class="ghost" data-act="snap" data-k="${x.k}">${ui.confirmSnap === x.k ? 'Conferma' : 'Ripristina'}</button></div>`; }).join('')}` : ''}
     <button class="danger" style="margin-top:14px" data-act="reset">${ui.confirmReset ? 'Tocca di nuovo per cancellare tutto' : 'Cancella tutti i dati'}</button>
   </section>
-  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.3.1 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.3 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
 }
 
 // ---------- Render ----------
@@ -1059,31 +1059,6 @@ document.addEventListener('touchend', ev => {
   const c = state.current; const n = E.groupItems(c.items).length;
   if (dx < 0 && c.cur < n - 1) go(c.cur + 1); else if (dx > 0 && c.cur > 0) go(c.cur - 1); else if (dx > 0 && c.cur === 0) showList();
 }, { passive: true });
-
-// ---------- Schermo intero sull'iPhone ----------
-// Nell'app installata alcune versioni di iOS fanno finire l'area utile più in alto del fondo dello
-// schermo (resta una fascia vuota sotto la barra). Si misura l'area vera con un elemento fisso
-// e si allunga la pagina fino al bordo (variabile CSS --gap). Nel browser non si tocca niente.
-function fitScreen() {
-  const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
-  let gap = 0;
-  if (standalone) {
-    if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName || '')) return;   // tastiera aperta: non misurare
-    const probe = document.createElement('div');
-    probe.style.cssText = 'position:fixed;top:0;bottom:0;left:0;width:1px;visibility:hidden;pointer-events:none';
-    document.body.appendChild(probe);
-    const h = probe.getBoundingClientRect().height; probe.remove();
-    const portrait = innerHeight >= innerWidth;
-    const full = portrait ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
-    gap = full - h;
-    if (!(gap > 2 && gap < 120)) gap = 0;
-  }
-  document.documentElement.style.setProperty('--gap', `${Math.round(gap)}px`);
-}
-fitScreen();
-addEventListener('resize', () => setTimeout(fitScreen, 120));
-addEventListener('orientationchange', () => setTimeout(fitScreen, 300));
-addEventListener('pageshow', fitScreen);
 
 // ---------- Avvio ----------
 {
