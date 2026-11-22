@@ -111,7 +111,9 @@ export function daysSince(state, muscle, today = dayKey()) {
 // Regole: al massimo "sedute" allenamenti in ogni finestra di 7 giorni (contando quelli fatti davvero),
 // stacco preferito di almeno 7/sedute giorni (2 sedute → 3, 3 → 2, 4 → 1), giorni non disponibili saltati,
 // mai 3 giorni di fila. Se lo stacco preferito porterebbe troppo in là, si accetta un giorno più vicino.
-const doneDays = state => new Set(state.sessions.map(s => s.date));
+// Una seduta "mini" (pochi esercizi segnati, per esempio a casa) conta per i muscoli ma non come giorno di allenamento
+export const counts = s => !s.mini;
+const doneDays = state => new Set(state.sessions.filter(counts).map(s => s.date));
 
 export function recommendedDays(state, today = dayKey()) {
   const freq = state.settings.freq || 3;
@@ -148,7 +150,9 @@ export function strip(state, today = dayKey()) {
   const days = [];
   for (let i = -3; i <= 3; i++) {
     const k = addDays(today, i);
-    days.push({ key: k, label: DAY_SHORT[weekday(k)], num: parseDay(k).getDate(), today: i === 0, done: done.has(k), rec: !done.has(k) && rec.has(k) && i >= 0 });
+    const s = state.sessions.find(x => x.date === k);
+    const frac = s && !s.free ? s.frac ?? 1 : null;      // seduta del piano: anello pieno o parziale
+    days.push({ key: k, label: DAY_SHORT[weekday(k)], num: parseDay(k).getDate(), today: i === 0, done: done.has(k), frac, extra: !!s?.free, rec: !done.has(k) && rec.has(k) && i >= 0 });
   }
   return days;
 }
@@ -166,7 +170,7 @@ export function nextLabel(state, today = dayKey()) {
 // ---------- Ciclo ----------
 export function cycleInfo(state) {
   const c = state.cycle;
-  const done = state.sessions.filter(s => !s.deload).length - c.startCount;
+  const done = state.sessions.filter(s => !s.deload && counts(s)).length - c.startCount;
   return { n: c.n, session: Math.min(done + 1, c.length), done, length: c.length, deloadLeft: c.deloadLeft, goal: c.goal,
     checkpoint: done > 0 && done % 12 === 0 };
 }
@@ -175,7 +179,7 @@ export function cycleInfo(state) {
 export function checkpointDue(state) {
   const c = state.cycle;
   if (c.deloadLeft > 0) return false;
-  const real = state.sessions.filter(s => !s.deload);
+  const real = state.sessions.filter(s => !s.deload && counts(s));
   const twelfth = real[c.startCount + 11];
   if (!twelfth) return false;
   return !state.body.waist.some(w => w.date >= twelfth.date);
@@ -331,7 +335,7 @@ export function seedSession(state, today) {
 export function compose(state, today = dayKey(), now = Date.now()) {
   const cyc = cycleInfo(state);
   const deload = state.cycle.deloadLeft > 0;
-  const nonDeload = state.sessions.filter(s => !s.deload).length;
+  const nonDeload = state.sessions.filter(s => !s.deload && counts(s)).length;
   let res;
   if (nonDeload < 4) res = seedSession(state, today);
   else res = dynamicSession(state, today, now);
@@ -340,7 +344,7 @@ export function compose(state, today = dayKey(), now = Date.now()) {
     res.reason = `Scarico (${4 - state.cycle.deloadLeft} di 3): metà serie, stessi carichi, sforzo facile o giusto`;
   }
   const minutes = itemMinutes(res.items);
-  return { date: today, start: null, items: res.items, reason: res.reason, seed: res.seed || null, deload, cycle: cyc.n, minutes, cur: 0 };
+  return { date: today, items: res.items, reason: res.reason, seed: res.seed || null, deload, cycle: cyc.n, minutes, cur: 0, view: 'list' };
 }
 
 function dynamicSession(state, today, now) {
@@ -522,24 +526,84 @@ function advanceCycle(state, deload, date) {
   }
 }
 
-// Elimina una seduta e ricalcola cicli e scarichi rigiocando le sedute rimaste
-export function deleteSession(state, id) {
-  const rest = state.sessions.filter(s => s.id !== id);
-  if (rest.length === state.sessions.length) return false;
+// Ricalcola cicli e scarichi rigiocando le sedute nell'ordine. L'ultima seduta conserva lo stato
+// del ciclo di prima (cycleBefore), così si può aggiornare mentre ci si allena.
+function replay(state, list) {
   const old = state.cycle;
   state.cycle = { n: 1, level: 0, startCount: 0, length: old.length, deloadLeft: 0, goal: old.goal, history: [], levelUp: false };
   state.sessions = [];
-  for (const s of rest) { s.cycle = state.cycle.n; state.sessions.push(s); advanceCycle(state, !!s.deload, s.date); }
+  for (const s of list) {
+    delete s.cycleBefore;
+    s.cycleBefore = JSON.parse(JSON.stringify(state.cycle));
+    s.cycle = state.cycle.n; state.sessions.push(s);
+    if (counts(s)) advanceCycle(state, !!s.deload, s.date);
+  }
+  list.slice(0, -1).forEach(s => delete s.cycleBefore);
+}
+
+// Elimina una seduta e ricalcola cicli e scarichi
+export function deleteSession(state, id) {
+  const rest = state.sessions.filter(s => s.id !== id);
+  if (rest.length === state.sessions.length) return false;
+  replay(state, rest);
   return true;
+}
+
+export const MINI_SETS = 6;     // sotto questo numero di serie la giornata è "extra", non una seduta del ciclo
+const isItemDone = it => it.id === 'cardio' ? it.sets.length > 0 : it.sets.length >= it.planSets;
+
+// Salva (o aggiorna) la giornata di allenamento a ogni serie: niente "Termina" obbligatorio.
+// Una sola seduta per data; tutto ciò che è segnato nel giorno finisce lì.
+export function recordDay(state, cur, now = Date.now()) {
+  const items = cur.items.map(it => ({ id: it.id, ss: it.ss || null, planSets: it.planSets, sets: (it.sets || []).filter(Boolean), skipped: !!it.skipped, minutes: it.minutes }));
+  const all = items.flatMap(i => i.sets);
+  let s = state.sessions.find(x => x.date === cur.date);
+  if (!all.length) { if (s) deleteSession(state, s.id); return null; }
+  const before = state.cycle.n;
+  if (!s) {
+    state.sessions.forEach(x => delete x.cycleBefore);
+    s = { id: now, date: cur.date, cycleBefore: JSON.parse(JSON.stringify(state.cycle)) };
+    state.sessions.push(s);
+    state.sessions.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  }
+  const fill = () => {
+    const work = items.filter(i => i.id !== 'cardio');
+    const nWork = work.reduce((a, i) => a + i.sets.length, 0);
+    const ts = all.map(x => x.t || now);
+    const start = Math.min(...ts) - 4 * 60000, end = Math.max(...ts) + 2 * 60000;
+    const minutes = Math.max(1, Math.round((end - start) / 60000));
+    const hard = all.filter(x => x.eff !== 'facile').length / all.length > 0.5;
+    const planned = work.filter(i => !i.skipped || i.sets.length);
+    Object.assign(s, { items, start, end, minutes, deload: !!cur.deload, seed: cur.seed || null, mini: nWork < MINI_SETS, free: !!cur.free,
+      frac: planned.length ? planned.filter(isItemDone).length / planned.length : 1,
+      kcal: kcalRange(state, minutes, { superset: items.some(i => i.ss), hard }) });
+    const others = { sessions: state.sessions.filter(x => x !== s) };
+    s.records = [];
+    for (const it of items) {
+      if (!EX[it.id] || !it.sets.length || EX[it.id].type === 'time') continue;
+      const prev = history(others, it.id);
+      const prevBest = Math.max(0, ...prev.map(p => bestE1rm(p.sets)));
+      const best = bestE1rm(it.sets);
+      if (prev.length && best > prevBest + 0.01) s.records.push({ id: it.id, e1rm: best });
+    }
+  };
+  fill();
+  if (state.sessions[state.sessions.length - 1] !== s || !s.cycleBefore) replay(state, state.sessions);
+  else {
+    state.cycle = JSON.parse(JSON.stringify(s.cycleBefore));
+    s.cycle = state.cycle.n;
+    if (counts(s)) advanceCycle(state, !!s.deload, s.date);
+  }
+  return { session: s, newCycle: state.cycle.n > before };
 }
 
 function newCycle(state, date = dayKey()) {
   const c = state.cycle;
-  const cycleSessions = state.sessions.filter(s => s.cycle === c.n && !s.deload);
+  const cycleSessions = state.sessions.filter(s => s.cycle === c.n && !s.deload && counts(s));
   const up = !!c.levelUp;
   c.history.push({ n: c.n, goal: c.goal, sessions: cycleSessions.length, levelUp: up, end: date });
   if (up) c.level = Math.min(2, c.level + 1);
-  c.n += 1; c.startCount = state.sessions.filter(s => !s.deload).length; c.deloadLeft = 0; c.levelUp = false;
+  c.n += 1; c.startCount = state.sessions.filter(s => !s.deload && counts(s)).length; c.deloadLeft = 0; c.levelUp = false;
 }
 
 // ---------- Alimentazione ----------
