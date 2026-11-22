@@ -158,7 +158,8 @@ button.back { padding: 4px 2px; font-weight: 600; }
 .how { margin-top: 10px; display: grid; gap: 8px; }
 .how div { font-size: 15px; line-height: 1.45; }
 .how b { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
-.note { margin-top: 10px; }
+.note { margin-top: 2px; }
+.note b { margin-bottom: 4px; }
 .note input { min-height: 38px; font-size: 14px; }
 
 /* Serie: tinta per numero di serie (1 menta, 2 giallo, 3+ arancio) */

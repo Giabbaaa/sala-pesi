@@ -522,9 +522,10 @@ function viewSession() {
       <div class="row between" style="align-items:flex-start"><h3>${esc(e.name)}${isDone(it) ? ' <span class="check">✓</span>' : ''}</h3><span class="muted small" style="white-space:nowrap;margin-top:4px">${it.planSets} × ${rangeLabel(it.id)}</span></div>
       ${musclesHtml(e)}
       ${flipHtml(it.id)}
-      ${e.how?.length ? `<button class="info-btn" data-act="info" data-id="${it.id}" aria-expanded="${open}">${INFO_ICON}${open ? 'Nascondi istruzioni' : 'Come si fa'}</button>` : ''}
-      ${open ? `<div class="how ${ui.infoAnim === it.id ? 'open' : ''}">${howHtml(e)}</div>` : ''}
-      <div class="note"><input type="text" placeholder="Nota personale (es. sedile al 4)" value="${esc(st.note)}" data-in="note" data-id="${it.id}"></div>`;
+      <button class="info-btn" data-act="info" data-id="${it.id}" aria-expanded="${open}">${INFO_ICON}${open ? 'Nascondi istruzioni' : `Come si fa${st.note ? ' e nota' : ''}`}</button>
+      ${open ? `<div class="how ${ui.infoAnim === it.id ? 'open' : ''}">${howHtml(e)}
+        <div class="note"><b>Nota personale</b><input type="text" placeholder="es. sedile al 4" value="${esc(st.note)}" data-in="note" data-id="${it.id}"></div></div>` : ''}
+      ${(() => { const sw = swapButtons(c, g, it, idx, usedIds); return sw ? `<div class="ctrls">${sw}</div>` : ''; })()}`;
     if (!st.incSet && !noKg(it.id)) {
       html += `<div style="margin-top:10px"><p class="small"><b>Di quanto sale il carico su questo attrezzo?</b> Lo chiedo una volta sola.</p>
         <div class="chips" style="margin-top:6px">${[1, 1.25, 2, 2.5, 5].map(v => `<button class="${v === st.inc ? 'on' : ''}" data-act="inc" data-id="${it.id}" data-v="${v}">${kg(v)} kg</button>`).join('')}</div></div>`;
@@ -570,7 +571,6 @@ function viewSession() {
     }
     html += `</div>
       <div class="ctrls" style="margin-top:8px"><button data-act="add-set" data-i="${idx}">+ serie</button>
-      ${swapButtons(c, g, it, idx, usedIds)}
       ${!isDone(it) ? `<button data-act="skip" data-i="${idx}">${it.skipped ? 'Riprendi' : 'Salta'}</button>` : ''}</div>
     </div>`;
   }
