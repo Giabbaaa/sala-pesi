@@ -94,8 +94,13 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 0;
 /* Calendario */
 .next { font-size: 15px; }
 .next b { font-size: 22px; display: block; letter-spacing: -0.01em; }
-.strip { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 12px; }
-.day { text-align: center; font-size: 12px; color: var(--muted); }
+.month { font-size: 13px; font-weight: 600; color: var(--muted); padding-bottom: 3px; }
+/* 31 giorni in fila, 7 alla volta, scorrevoli col dito */
+.strip { position: relative; display: flex; gap: 4px; margin: 10px -16px -4px; padding: 2px 16px 6px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding: 0 16px; scrollbar-width: none; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
+.strip::-webkit-scrollbar { display: none; }
+.day { flex: 0 0 calc((100% - 24px) / 7); scroll-snap-align: start; text-align: center; font-size: 12px; color: var(--muted); background: none; min-height: 0; padding: 6px 0 7px; border-radius: 14px; }
+.day:active { transform: scale(.94); }
+.day.sel { background: var(--card2); color: var(--text); font-weight: 700; box-shadow: inset 0 0 0 1px var(--line); }
 .day i { display: grid; place-items: center; margin: 4px auto 0; width: 36px; height: 36px; border-radius: 50%; font-style: normal; font-size: 14px; color: var(--text); border: 2px solid transparent; }
 .day.lv1 i, .day.lv2 i, .day.lv3 i { background: var(--lv); color: #12161c; font-weight: 700; }
 .day.extra i { background: color-mix(in srgb, var(--l1) 22%, var(--card)); }
@@ -145,8 +150,9 @@ button.back { padding: 4px 2px; font-weight: 600; }
 .flip img.b { animation: flip 2.4s steps(1) infinite; }
 @keyframes flip { 0% { opacity: 0; } 50% { opacity: 1; } }
 .muscles { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.muscles span { font-size: 13px; font-weight: 600; padding: 3px 10px; border-radius: 14px; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
-.muscles span.m2 { background: transparent; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); font-weight: 500; }
+.muscles span { font-size: 13px; font-weight: 650; padding: 4px 11px; border-radius: 14px; background: var(--lv, var(--card2)); color: #12161c; }
+.muscles span.lv2 { font-weight: 600; }
+.muscles span.lv1 { font-weight: 550; }
 .info-btn { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; min-height: 36px; padding: 6px 12px; font-size: 15px; font-weight: 600; border-radius: 18px; }
 .info-btn svg { width: 18px; height: 18px; fill: currentColor; }
 .how { margin-top: 10px; display: grid; gap: 8px; }
@@ -184,6 +190,8 @@ button.back { padding: 4px 2px; font-weight: 600; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chips button { min-height: 34px; padding: 4px 12px; font-size: 14px; border-radius: 18px; }
 .chips button.on { background: var(--accent); color: #fff; }
+.chips.week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+.chips.week button { padding: 4px 0; }
 .seg { display: inline-grid; grid-auto-flow: column; background: var(--card2); border-radius: 10px; padding: 2px; }
 .seg button { min-height: 34px; padding: 4px 12px; font-size: 14px; background: none; border-radius: 8px; }
 .seg button.on { background: var(--accent); color: #fff; font-weight: 600; }
@@ -243,6 +251,35 @@ button.back { padding: 4px 2px; font-weight: 600; }
 .exset select { width: auto; min-height: 36px; padding: 4px 8px; }
 .exset input { width: 64px; min-height: 36px; padding: 4px 6px; }
 .done-card { text-align: center; position: relative; }
+.card:has(> .del-corner) { position: relative; }
+.card:has(> .del-corner) > h3 { padding-right: 44px; }
+
+/* Storico di un giorno e previsione */
+.hist-row { display: grid; gap: 6px; padding: 10px 0; border-top: 1px solid var(--line); }
+.hist-row b { font-weight: 600; }
+.pills { display: flex; flex-wrap: wrap; gap: 5px; }
+.pills span { font-size: 13px; padding: 3px 9px; border-radius: 12px; background: color-mix(in srgb, var(--lv, var(--skip)) 26%, var(--card)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lv, var(--skip)) 55%, transparent); font-variant-numeric: tabular-nums; }
+
+/* Traguardo del ciclo */
+.goal { margin: 10px 0; }
+.goal .bar { margin: 5px 0 3px; height: 8px; }
+.nowrap { white-space: nowrap; }
+
+/* Copie dei dati */
+.snap { padding: 8px 0 0; border-top: 1px solid var(--line); }
+.snap button { white-space: nowrap; }
+.filebtn { justify-content: center; background: var(--card2); border-radius: 10px; min-height: 44px; cursor: pointer; }
+
+/* Scheda a comparsa (tenendo premuto un esercizio) */
+.sheet { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-end; justify-content: center; }
+.sheet-bg { position: absolute; inset: 0; background: rgb(0 0 0 / .38); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); animation: fadeIn .2s ease-out; }
+.sheet-card { position: relative; width: 100%; max-width: 560px; max-height: 84%; overflow-y: auto; overscroll-behavior: contain;
+  background: var(--card); border-radius: 22px 22px 0 0; padding: 18px 16px calc(env(safe-area-inset-bottom) + 20px); box-shadow: 0 -8px 30px rgb(0 0 0 / .2); animation: sheetUp .3s cubic-bezier(.2, .8, .2, 1); }
+.sheet-card .how { margin-top: 14px; }
+.sheet-card::before { content: ''; display: block; width: 40px; height: 5px; border-radius: 3px; background: var(--line); margin: -8px auto 10px; }
+.pchips button { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+@keyframes fadeIn { from { opacity: 0; } }
+@keyframes sheetUp { from { transform: translateY(40%); opacity: .4; } to { transform: none; opacity: 1; } }
 .done-card.complete { background: color-mix(in srgb, var(--l1) 14%, var(--card)); border-color: color-mix(in srgb, var(--l1) 45%, transparent); }
 .del-corner { position: absolute; top: 6px; right: 6px; }
 .done-card .big-num { font-size: 40px; }
@@ -267,5 +304,5 @@ button.back { padding: 4px 2px; font-weight: 600; }
 @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 @keyframes pulse { 50% { transform: scale(1.08); } }
 @media (prefers-reduced-motion: reduce) {
-  .screen, .pop, .set.active.slide, .progress span.pop, .toast, .timer, .timer .t, .how.open { animation: none !important; }
+  .screen, .pop, .set.active.slide, .progress span.pop, .toast, .timer, .timer .t, .how.open, .sheet-bg, .sheet-card { animation: none !important; }
 }

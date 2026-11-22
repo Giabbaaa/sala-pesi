@@ -19,12 +19,20 @@ export const epley = (kg, reps) => kg * (1 + reps / 30);
 export const round10 = x => Math.round(x / 10) * 10;
 
 // ---------- Stato iniziale ----------
+// Versione del formato dei dati. Regole per non perdere mai nulla negli aggiornamenti:
+// - le serie fatte (data, esercizio, kg, ripetizioni, sforzo) sono il dato vero e non si riscrivono;
+//   cicli, record, kcal e calendario si ricalcolano da lì (replay);
+// - ogni cambio di formato alza SCHEMA e aggiunge un passo in MIGRATIONS, che trasforma senza cancellare;
+// - gli id degli esercizi non si cancellano né si rinominano: un esercizio tolto diventa hidden: true;
+// - prima di ogni migrazione l'app salva una copia dei dati com'erano (vedi app.js, snapshot).
+export const SCHEMA = 2;
+
 export function initialState() {
   return {
-    v: 1,
+    v: SCHEMA,
     settings: {
       freq: 3,
-      unavailable: [],
+      days: [],                      // giorni della settimana in cui si pensa di andare (0 = domenica); vuoto = li propone l'app
       priority: { ...DEFAULT_PRIORITY },
       plan: JSON.parse(JSON.stringify(DEFAULT_PLAN)),
       ex: {},                        // per esercizio: { inc, plates, base, note }
@@ -39,10 +47,29 @@ export function initialState() {
   };
 }
 
+// Passi di migrazione: MIGRATIONS[n] porta i dati dalla versione n alla n + 1
+const MIGRATIONS = {
+  1: s => {   // 1 → 2: da "giorni in cui non puoi" a "giorni in cui pensi di andare"
+    if (s.settings) { s.settings.days = s.settings.days || []; delete s.settings.unavailable; }
+    return s;
+  },
+};
+
+// Un esercizio presente nello storico ma non più nel catalogo resta leggibile (nome salvato con la seduta)
+function keepUnknown(s) {
+  for (const ses of s.sessions || []) for (const it of ses.items || []) {
+    if (!it || it.id === 'cardio' || EX[it.id]) continue;
+    EX[it.id] = { id: it.id, name: it.name || it.id.replace(/_/g, ' '), muscle: it.muscle || null, type: 'iso', work: {}, equip: '', how: [], cues: [], hidden: true, unknown: true };
+  }
+}
+
 export function migrate(s) {
   const base = initialState();
   if (!s || typeof s !== 'object') return base;
-  const out = { ...base, ...s };
+  s = JSON.parse(JSON.stringify(s));
+  for (let n = s.v || 1; n < SCHEMA; n++) if (MIGRATIONS[n]) s = MIGRATIONS[n](s) || s;
+  keepUnknown(s);
+  const out = { ...base, ...s, v: Math.max(SCHEMA, s.v || 1) };
   out.settings = { ...base.settings, ...(s.settings || {}) };
   out.settings.priority = { ...base.settings.priority, ...(out.settings.priority || {}) };
   out.settings.plan = { ...base.settings.plan, ...(out.settings.plan || {}) };
@@ -71,8 +98,8 @@ export function exSettings(state, id) {
 // ---------- Priorità per esercizio ----------
 // plan[muscolo][id] = 3 alta (sempre, misura i progressi), 2 media (a rotazione), 1 bassa (ogni tanto)
 export const exPrio = (state, id) => (state.settings.plan[EX[id]?.muscle] || {})[id] || 0;
-export const anchorsOf = (state, m) => EXERCISES.filter(e => e.muscle === m && exPrio(state, e.id) === 3).map(e => e.id);
-export const poolOf = (state, m) => EXERCISES.filter(e => e.muscle === m && exPrio(state, e.id) > 0).map(e => e.id);
+export const anchorsOf = (state, m) => EXERCISES.filter(e => e.muscle === m && !e.hidden && exPrio(state, e.id) === 3).map(e => e.id);
+export const poolOf = (state, m) => EXERCISES.filter(e => e.muscle === m && !e.hidden && exPrio(state, e.id) > 0).map(e => e.id);
 
 // ---------- Storico ----------
 const workSets = it => (it.sets || []).filter(s => s && s.reps > 0);
@@ -128,14 +155,22 @@ export function daysSince(state, muscle, today = dayKey()) {
 export const counts = s => !s.mini;
 const doneDays = state => new Set(state.sessions.filter(counts).map(s => s.date));
 
-export function recommendedDays(state, today = dayKey()) {
-  const freq = state.settings.freq || 3;
+// Sedute a settimana: i giorni scelti in Ritmo, oppure il numero impostato
+export const freqOf = state => { const d = state.settings.days || []; return d.length ? Math.min(5, Math.max(2, d.length)) : (state.settings.freq || 3); };
+
+export function recommendedDays(state, today = dayKey(), count = 6) {
+  const days = state.settings.days || [];
+  const taken = doneDays(state);
+  if (days.length) {          // giorni scelti: i prossimi di quei giorni non ancora fatti
+    const out = [];
+    for (let i = 0; i <= 60 && out.length < count; i++) { const k = addDays(today, i); if (days.includes(weekday(k)) && !taken.has(k)) out.push(k); }
+    return out;
+  }
+  const freq = freqOf(state);
   const minGap = Math.max(1, Math.floor(7 / freq));
   const late = Math.ceil(7 / freq);
-  const unav = state.settings.unavailable || [];
-  const taken = doneDays(state);
   const inWindow = k => { let n = 0; for (let i = 1; i <= 6; i++) if (taken.has(addDays(k, -i))) n++; return n; };
-  const fits = k => !unav.includes(weekday(k)) && !(taken.has(addDays(k, -1)) && taken.has(addDays(k, -2))) && inWindow(k) < freq;
+  const fits = k => !(taken.has(addDays(k, -1)) && taken.has(addDays(k, -2))) && inWindow(k) < freq;
   const next = (from, minDay) => {
     let relaxed = null;
     for (let g = 1; g <= 21; g++) {
@@ -150,25 +185,29 @@ export function recommendedDays(state, today = dayKey()) {
   let cand = last ? next(last, addDays(last, 1)) : null;
   if (!cand || cand < today) cand = next(null, today);      // seduta saltata: primo giorno utile da oggi
   const out = [];
-  while (cand && out.length < 6) {
+  while (cand && out.length < count) {
     out.push(cand); taken.add(cand);
     cand = next(cand, addDays(cand, 1));
   }
   return out;
 }
 
-export function strip(state, today = dayKey()) {
-  const rec = new Set(recommendedDays(state, today));
+// Giorni del calendario da "from" a "to" rispetto a oggi
+export function strip(state, today = dayKey(), from = -3, to = 3) {
+  const rec = new Set(recommendedDays(state, today, 12));
   const done = doneDays(state);
   const days = [];
-  for (let i = -3; i <= 3; i++) {
+  for (let i = from; i <= to; i++) {
     const k = addDays(today, i);
     const s = state.sessions.find(x => x.date === k);
-    const frac = s && !s.free ? s.frac ?? 1 : null;      // seduta del piano: anello pieno o parziale
-    days.push({ key: k, label: DAY_SHORT[weekday(k)], num: parseDay(k).getDate(), today: i === 0, done: done.has(k), frac, extra: !!s?.free, rec: !done.has(k) && rec.has(k) && i >= 0 });
+    const real = s && !s.free && counts(s);
+    const frac = real ? s.frac ?? 1 : null;      // seduta del piano: colore pieno o parziale
+    days.push({ key: k, label: DAY_SHORT[weekday(k)], num: parseDay(k).getDate(), month: parseDay(k).getMonth(), year: parseDay(k).getFullYear(),
+      today: i === 0, past: i < 0, done: done.has(k), frac, extra: !!s && !real, rec: !done.has(k) && rec.has(k) && i >= 0 });
   }
   return days;
 }
+export const MONTHS = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
 
 export function nextLabel(state, today = dayKey()) {
   const rec = recommendedDays(state, today);
@@ -366,7 +405,7 @@ export function compose(state, today = dayKey(), now = Date.now()) {
 
 function dynamicSession(state, today, now) {
   const { settings } = state;
-  const freq = settings.freq;
+  const freq = freqOf(state);
   const done = setsByMuscle(state, addDays(today, -3), today);
   const future = recommendedDays(state, today).filter(k => k > today && diffDays(k, today) <= 3).length;
   const need = {}, target = {}, light = [];
@@ -575,7 +614,9 @@ const isItemDone = it => it.id === 'cardio' ? it.sets.length > 0 : it.sets.lengt
 // Salva (o aggiorna) la giornata di allenamento a ogni serie: niente "Termina" obbligatorio.
 // Una sola seduta per data; tutto ciò che è segnato nel giorno finisce lì.
 export function recordDay(state, cur, now = Date.now()) {
-  const items = cur.items.map(it => ({ id: it.id, ss: it.ss || null, planSets: it.planSets, sets: (it.sets || []).filter(Boolean), skipped: !!it.skipped, minutes: it.minutes }));
+  // con ogni esercizio si salva anche nome e muscolo: lo storico resta leggibile anche se il catalogo cambia
+  const items = cur.items.map(it => ({ id: it.id, name: EX[it.id]?.name || (it.id === 'cardio' ? 'Cardio' : it.name), muscle: EX[it.id]?.muscle || null,
+    ss: it.ss || null, planSets: it.planSets, sets: (it.sets || []).filter(Boolean), skipped: !!it.skipped, minutes: it.minutes }));
   const all = items.flatMap(i => i.sets);
   let s = state.sessions.find(x => x.date === cur.date);
   if (!all.length) { if (s) deleteSession(state, s.id); return null; }
@@ -589,8 +630,11 @@ export function recordDay(state, cur, now = Date.now()) {
   const fill = () => {
     const work = items.filter(i => i.id !== 'cardio');
     const nWork = work.reduce((a, i) => a + i.sets.length, 0);
-    const ts = all.map(x => x.t || now);
-    const start = Math.min(...ts) - 4 * 60000, end = Math.max(...ts) + 2 * 60000;
+    // orari: quelli delle serie segnate quel giorno; per un giorno passato segnato dopo, una stima
+    const ts = all.map(x => x.t || now).filter(t => dayKey(new Date(t)) === cur.date);
+    let start, end;
+    if (ts.length) { start = Math.min(...ts) - 4 * 60000; end = Math.max(...ts) + 2 * 60000; }
+    else { start = parseDay(cur.date).getTime() + 18 * 36e5; end = start + Math.round(8 + nWork * 2.5 + items.filter(i => i.id === 'cardio' && i.sets.length).reduce((a, i) => a + (i.minutes || 0), 0)) * 60000; }
     const minutes = Math.max(1, Math.round((end - start) / 60000));
     const hard = all.filter(x => x.eff !== 'facile').length / all.length > 0.5;
     const planned = work.filter(i => !i.skipped || i.sets.length);
@@ -624,6 +668,56 @@ function newCycle(state, date = dayKey()) {
   c.history.push({ n: c.n, goal: c.goal, sessions: cycleSessions.length, levelUp: up, end: date });
   if (up) c.level = Math.min(2, c.level + 1);
   c.n += 1; c.startCount = state.sessions.filter(s => !s.deload && counts(s)).length; c.deloadLeft = 0; c.levelUp = false;
+}
+
+// ---------- Traguardo del ciclo (automatico) ----------
+// Per gli esercizi a priorità alta dei muscoli a priorità alta: dal carico di inizio ciclo a circa +7,5%
+// (almeno un salto), al massimo delle ripetizioni. Peso: −0,5 kg a settimana dalla media di inizio ciclo.
+export function cycleGoals(state, today = dayKey()) {
+  const c = state.cycle;
+  const mine = state.sessions.filter(s => s.cycle === c.n && !s.deload);
+  const startDay = mine[0]?.date || today;
+  const out = [];
+  const ids = MUSCLE_ORDER.filter(m => state.settings.priority[m] === 'alta').flatMap(m => anchorsOf(state, m))
+    .filter(id => !['time', 'bw'].includes(EX[id].type));
+  for (const id of ids) {
+    const all = history(state, id).filter(p => !p.deload);       // dalla più recente
+    const before = all.find(p => p.date < startDay), first = [...all].reverse().find(p => p.date >= startDay);
+    const ref = before || first;
+    const from = ref ? Math.max(...ref.sets.map(x => x.kg || 0)) : START_LOADS[id];
+    if (!from) continue;
+    const { inc } = exSettings(state, id);
+    const to = Math.max(from + inc, roundTo(from * 1.075, inc));
+    const now = all[0] ? Math.max(...all[0].sets.map(x => x.kg || 0)) : null;
+    out.push({ id, from, to, reps: TYPE_RULES[EX[id].type].max, now });
+    if (out.length === 3) break;
+  }
+  let weight = null;
+  const w = state.body.weights;
+  if (w.length) {
+    const startW = weightAvg(state, startDay) ?? w[0].kg;
+    const weeks = c.length / freqOf(state);
+    weight = { from: Math.round(startW * 10) / 10, to: Math.round((startW - 0.5 * weeks) * 10) / 10, now: Math.round(weightAvg(state, w[w.length - 1].date) * 10) / 10 };
+  }
+  return { lifts: out, weight };
+}
+
+// ---------- Previsione per un giorno futuro ----------
+// Simula le sedute consigliate fino a quel giorno (come se fossero fatte come previsto):
+// è una stima, che si aggiorna con quello che si fa davvero.
+export function forecast(state, day, todayPlan = null, today = dayKey()) {
+  const rec = recommendedDays(state, today, 12).filter(k => k <= day);
+  if (!rec.includes(day)) return null;
+  const sim = { ...state, sessions: [...state.sessions], cycle: { ...state.cycle } };
+  const at = k => parseDay(k).getTime() + 18 * 36e5;
+  for (const k of rec) {
+    const plan = k === today && todayPlan ? todayPlan : compose(sim, k, at(k));
+    if (k === day) return plan;
+    const items = plan.items.map(it => ({ id: it.id, ss: it.ss, planSets: it.planSets, minutes: it.minutes,
+      sets: it.id === 'cardio' ? [{ kg: 0, reps: it.minutes, eff: 'giusto' }] : Array.from({ length: it.planSets }, () => ({ kg: it.kg || 0, reps: it.reps, eff: 'giusto' })) }));
+    sim.sessions.push({ id: -at(k), date: k, start: at(k), end: at(k) + plan.minutes * 60000, items, seed: plan.seed, deload: plan.deload, frac: 1 });
+  }
+  return null;
 }
 
 // ---------- Alimentazione ----------
