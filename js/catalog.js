@@ -519,6 +519,13 @@ export const EXERCISES = [
 
 export const EX = Object.fromEntries(EXERCISES.map(e => [e.id, e]));
 
+// Macchine che fanno più esercizi sulla stessa postazione (utile per le superserie)
+const STATIONS = { Butterfly: 'pecdeck', Reverse_Machine_Flyes: 'pecdeck', Leg_Press: 'legpress', Calf_Press_On_The_Leg_Press_Machine: 'legpress' };
+for (const [id, st] of Object.entries(STATIONS)) EX[id].station = st;
+
+// Ordine degli attrezzi quando si cambia (macchina occupata → cavo → manubri → ...)
+export const EQUIP_ORDER = ['macchina', 'cavo', 'manubri', 'bilanciere', 'corpo'];
+
 export const imgs = id => [`img/ex/${id}_0.jpg`, `img/ex/${id}_1.jpg`];
 
 // Range di ripetizioni e recupero per tipo (documento di ricerca)
@@ -548,7 +555,7 @@ export const TARGETS = {
 export const DEFAULT_PLAN = {
   petto:       { Leverage_Chest_Press: 3, Leverage_Incline_Chest_Press: 2, Cable_Crossover: 2, Butterfly: 2, Low_Cable_Crossover: 1, Incline_Dumbbell_Press: 1 },
   laterali:    { Cable_Seated_Lateral_Raise: 3, Side_Lateral_Raise: 2, Upright_Cable_Row: 1 },
-  bicipiti:    { Machine_Bicep_Curl: 3, 'Cable_Hammer_Curls_-_Rope_Attachment': 2, Standing_Biceps_Cable_Curl: 2, Incline_Dumbbell_Curl: 1 },
+  bicipiti:    { Machine_Bicep_Curl: 3, Standing_Biceps_Cable_Curl: 3, 'Cable_Hammer_Curls_-_Rope_Attachment': 2, Incline_Dumbbell_Curl: 1 },
   tricipiti:   { 'Triceps_Pushdown_-_Rope_Attachment': 3, Cable_Rope_Overhead_Triceps_Extension: 2, Dip_Machine: 2, Standing_Dumbbell_Triceps_Extension: 1 },
   schiena:     { 'Wide-Grip_Lat_Pulldown': 3, Seated_Cable_Rows: 2, Leverage_Iso_Row: 2, 'Close-Grip_Front_Lat_Pulldown': 2, 'One-Arm_Dumbbell_Row': 1 },
   posteriori:  { Reverse_Machine_Flyes: 3, Face_Pull: 2, Cable_Rear_Delt_Fly: 1 },
@@ -581,7 +588,7 @@ export const SEED = {
     { id: 'Leg_Press', sets: 2 },
     { id: 'Machine_Shoulder_Military_Press', sets: 2 },
     { id: 'Cable_Seated_Lateral_Raise', sets: 2 },
-    { id: 'Machine_Bicep_Curl', sets: 3, ss: 1 },
+    { id: 'Standing_Biceps_Cable_Curl', sets: 3, ss: 1 },
     { id: 'Triceps_Pushdown_-_Rope_Attachment', sets: 3, ss: 1 },
     { id: 'Ab_Crunch_Machine', sets: 3 },
   ],
@@ -589,9 +596,9 @@ export const SEED = {
     { id: 'Leverage_Incline_Chest_Press', sets: 3 },
     { id: 'Seated_Cable_Rows', sets: 3 },
     { id: 'Seated_Leg_Curl', sets: 2 },
-    { id: 'Butterfly', sets: 2 },
+    { id: 'Butterfly', sets: 2, ss: 1 },
     { id: 'Reverse_Machine_Flyes', sets: 2, ss: 1 },
-    { id: 'Cable_Seated_Lateral_Raise', sets: 2, ss: 1 },
+    { id: 'Cable_Seated_Lateral_Raise', sets: 2 },
     { id: 'Cable_Hammer_Curls_-_Rope_Attachment', sets: 2, ss: 2 },
     { id: 'Cable_Rope_Overhead_Triceps_Extension', sets: 2, ss: 2 },
     { id: 'Plank', sets: 3 },

@@ -1,6 +1,6 @@
 // Logica dell'app: composizione dinamica della seduta, progressione dei carichi,
 // calendario consigliato, cicli, stime. Nessun accesso al DOM: testabile in Node.
-import { EX, EXERCISES, MUSCLES, MUSCLE_ORDER, TYPE_RULES, TARGETS, DEFAULT_PRIORITY, DEFAULT_PLAN, START_LOADS, SEED } from './catalog.js';
+import { EX, EXERCISES, MUSCLES, MUSCLE_ORDER, TYPE_RULES, TARGETS, DEFAULT_PRIORITY, DEFAULT_PLAN, START_LOADS, SEED, EQUIP_ORDER } from './catalog.js';
 
 // ---------- Date ----------
 export const pad = n => String(n).padStart(2, '0');
@@ -100,6 +100,90 @@ export function exSettings(state, id) {
 export const exPrio = (state, id) => (state.settings.plan[EX[id]?.muscle] || {})[id] || 0;
 export const anchorsOf = (state, m) => EXERCISES.filter(e => e.muscle === m && !e.hidden && exPrio(state, e.id) === 3).map(e => e.id);
 export const poolOf = (state, m) => EXERCISES.filter(e => e.muscle === m && !e.hidden && exPrio(state, e.id) > 0).map(e => e.id);
+
+// ---------- Postazioni e cambi ----------
+// Postazione: dove si fa l'esercizio. Cavi, manubri, bilanciere e corpo libero sono una postazione
+// ciascuno; una macchina è una postazione a sé, salvo le macchine con più esercizi (station).
+export const setupOf = id => { const e = EX[id]; if (!e) return id; return e.equip === 'macchina' ? `macchina:${e.station || e.id}` : e.equip; };
+const SS_TYPES = ['iso', 'bw'];
+const byPrio = state => (a, b) => exPrio(state, b) - exPrio(state, a) || EXERCISES.indexOf(EX[a]) - EXERCISES.indexOf(EX[b]);
+const muscleList = (state, m, ok) => EXERCISES.filter(x => x.muscle === m && !x.hidden && ok(x)).map(x => x.id).sort(byPrio(state));
+
+// "Cambia esercizio": il prossimo dello stesso muscolo con lo stesso attrezzo (in superserie: alla stessa postazione del compagno)
+export function nextSameSetup(state, id, used = new Set(), partner = null) {
+  const e = EX[id]; if (!e) return null;
+  const ok = partner ? x => setupOf(x.id) === setupOf(partner) && SS_TYPES.includes(x.type) : x => x.equip === e.equip;
+  // ordine fisso: prima i multiarticolari, poi gli isolamenti; dentro, per priorità
+  const T = ['multi', 'bw', 'iso', 'core', 'time'];
+  const ring = muscleList(state, e.muscle, x => x.id === id || ok(x)).sort((a, b) => T.indexOf(EX[a].type) - T.indexOf(EX[b].type));
+  const at = ring.indexOf(id);
+  return [...ring.slice(at + 1), ...ring.slice(0, Math.max(0, at))].find(x => x !== id && !used.has(x)) || null;
+}
+// "Cambia attrezzo": il miglior esercizio dello stesso muscolo con l'attrezzo successivo che ne ha uno
+export function nextSetup(state, id, used = new Set()) {
+  const e = EX[id]; if (!e) return null;
+  const k = Math.max(0, EQUIP_ORDER.indexOf(e.equip));
+  // prima un movimento simile (spinta con spinta, isolamento con isolamento), poi qualsiasi
+  const similar = x => x.type === e.type || x.type === 'bw' || e.type === 'bw';
+  for (const strict of [true, false]) {
+    for (let i = 1; i < EQUIP_ORDER.length; i++) {
+      const eq = EQUIP_ORDER[(k + i) % EQUIP_ORDER.length];
+      const best = muscleList(state, e.muscle, x => x.equip === eq && !used.has(x.id) && (!strict || similar(x)))[0];
+      if (best) return best;
+    }
+  }
+  return null;
+}
+// Superserie: le due postazioni successive in cui entrambi i muscoli hanno un esercizio
+export function nextSetupPair(state, a, b, used = new Set()) {
+  const ea = EX[a], eb = EX[b]; if (!ea || !eb) return null;
+  const pick = (m, setup) => muscleList(state, m, x => setupOf(x.id) === setup && SS_TYPES.includes(x.type) && !used.has(x.id))[0];
+  const k = Math.max(0, EQUIP_ORDER.indexOf(ea.equip));
+  for (let i = 1; i < EQUIP_ORDER.length; i++) {
+    const eq = EQUIP_ORDER[(k + i) % EQUIP_ORDER.length];
+    const setups = eq === 'macchina'
+      ? [...new Set(EXERCISES.filter(x => x.equip === 'macchina' && x.station).map(x => setupOf(x.id)))]
+      : [eq];
+    for (const st of setups) {
+      if (st === setupOf(a)) continue;
+      const x = pick(ea.muscle, st), y = pick(eb.muscle, st);
+      if (x && y) return [x, y];
+    }
+  }
+  return null;
+}
+
+// Forma le superserie solo tra esercizi alla stessa postazione. Se non ce ne sono, cambia
+// l'esercizio meno importante con uno della postazione dell'altro (un'alta solo con un'altra alta).
+const PAIRS = [['bicipiti', 'tricipiti'], ['bicipiti', 'tricipiti'], ['laterali', 'posteriori'], ['petto', 'posteriori']];
+function pairUp(state, items, today) {
+  const free = m => items.filter(it => it.id !== 'cardio' && EX[it.id]?.muscle === m && SS_TYPES.includes(EX[it.id].type) && !it.ss);
+  let n = 0;
+  for (const [m1, m2] of PAIRS) {
+    const A = free(m1), B = free(m2);
+    if (!A.length || !B.length) continue;
+    let pair = null;
+    for (const a of A) { const b = B.find(x => setupOf(x.id) === setupOf(a.id)); if (b) { pair = [a, b]; break; } }
+    if (!pair) {
+      const used = new Set(items.map(i => i.id));
+      const prio = it => exPrio(state, it.id);
+      outer: for (const [keepL, swapL] of [[A, B], [B, A]]) {
+        for (const keep of [...keepL].sort((x, y) => prio(y) - prio(x))) {
+          for (const sw of [...swapL].sort((x, y) => prio(x) - prio(y))) {
+            // un esercizio a priorità alta si cambia solo con un altro a priorità alta
+            const alt = poolOf(state, EX[sw.id].muscle).filter(id => !used.has(id) && SS_TYPES.includes(EX[id].type) && setupOf(id) === setupOf(keep.id)
+              && (prio(sw) < 3 || exPrio(state, id) >= 3)).sort(byPrio(state))[0];
+            if (!alt) continue;
+            const nu = makeItem(state, alt, sw.planSets, today);
+            items[items.indexOf(sw)] = nu;
+            pair = [keep, nu]; break outer;
+          }
+        }
+      }
+    }
+    if (pair) { const tag = `s${++n}`; pair[0].ss = pair[1].ss = tag; pair[0].planSets = pair[1].planSets = Math.max(pair[0].planSets, pair[1].planSets); }
+  }
+}
 
 // ---------- Storico ----------
 const workSets = it => (it.sets || []).filter(s => s && s.reps > 0);
@@ -481,14 +565,8 @@ function dynamicSession(state, today, now) {
     while (itemMinutes(items) > limit && guard++ < 80 && cutOne(level));
   }
 
-  // Superserie: bicipiti + tricipiti, laterali + posteriori (solo isolamenti)
-  const pair = (m1, m2, tag) => {
-    const a = items.find(it => EX[it.id].muscle === m1 && EX[it.id].type === 'iso' && !it.ss);
-    const b = items.find(it => EX[it.id].muscle === m2 && EX[it.id].type === 'iso' && !it.ss);
-    if (a && b) { a.ss = b.ss = tag; a.planSets = b.planSets = Math.max(a.planSets, b.planSets); }
-  };
-  pair('bicipiti', 'tricipiti', 's1'); pair('bicipiti', 'tricipiti', 's2');
-  pair('laterali', 'posteriori', 's3');
+  // Superserie alla stessa postazione: bicipiti + tricipiti, laterali + posteriori, petto + posteriori
+  pairUp(state, items, today);
 
   // Ordine: multi prioritari, altri multi, isolamenti (superserie insieme), addome, gambe
   const rank = it => {

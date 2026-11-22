@@ -429,7 +429,7 @@ function overview(c) {
           <div class="ctrls">
             <button data-act="ov-sets" data-i="${idx}" data-d="-1" aria-label="Una serie in meno" ${it.planSets <= Math.max(1, n) ? 'disabled' : ''}>−</button>
             <button data-act="ov-sets" data-i="${idx}" data-d="1" aria-label="Una serie in più">+</button>
-            ${n ? '' : `<button data-act="ov-swap" data-i="${idx}" aria-label="Cambia esercizio">⇄</button><button data-act="ov-del" data-i="${idx}" aria-label="Togli">✕</button>`}
+            ${n ? '' : `<button data-act="ov-del" data-i="${idx}" aria-label="Togli">✕</button>`}
           </div></div>
         <div class="updown"><button class="icon" data-act="ov-move" data-i="${idx}" data-d="-1" aria-label="Sposta su" ${idx === 0 ? 'disabled' : ''}>↑</button>
           <button class="icon" data-act="ov-move" data-i="${idx}" data-d="1" aria-label="Sposta giù" ${idx === c.items.length - 1 ? 'disabled' : ''}>↓</button></div>
@@ -440,7 +440,7 @@ function overview(c) {
     if (next && !g.cardio && !next.cardio) {
       rows += g.items.length > 1
         ? `<div class="join"><button data-act="ov-split" data-i="${g.start}">Separa la superserie</button></div>`
-        : next.items.length === 1 && EX[g.items[0].id].type !== 'multi' && EX[next.items[0].id].type !== 'multi' ? `<div class="join"><button data-act="ov-join" data-i="${g.start}">Unisci in superserie ↕</button></div>` : '';
+        : next.items.length === 1 && EX[g.items[0].id].type !== 'multi' && EX[next.items[0].id].type !== 'multi' && E.setupOf(g.items[0].id) === E.setupOf(next.items[0].id) ? `<div class="join"><button data-act="ov-join" data-i="${g.start}">Unisci in superserie ↕</button></div>` : '';
     }
   });
   ui.flashEx = null;
@@ -502,7 +502,10 @@ function viewSession() {
     <span class="muted small">esercizio ${c.cur + 1} di ${groups.length} · ${doneG} fatti</span></div><div class="progress">${segs}</div></div>`;
 
   const sm = g.items.length > 1;
-  html += `<section class="card">${sm ? '<span class="tag">Superserie: alterna i due esercizi, recupero dopo la coppia</span>' : ''}`;
+  const usedIds = new Set(c.items.map(x => x.id));
+  const pairNext = sm && g.items.length === 2 && g.items.every(x => !logged(x).length) ? E.nextSetupPair(state, g.items[0].id, g.items[1].id, usedIds) : null;
+  html += `<section class="card">${sm ? `<span class="tag">Superserie: alterna i due esercizi, recupero dopo la coppia</span>
+    ${pairNext ? `<div class="ctrls" style="margin:2px 0 14px"><button data-act="swap-pair" data-g="${c.cur}">Cambia attrezzo a tutti e due</button></div>` : ''}` : ''}`;
   // turno nella superserie: l'esercizio con meno serie fatte
   const turn = g.items.filter(i => !isDone(i) && !i.skipped).sort((a, b) => logged(a).length - logged(b).length)[0];
   for (const it of g.items) {
@@ -515,7 +518,7 @@ function viewSession() {
     const e = EX[it.id]; const st = E.exSettings(state, it.id);
     const last = E.suggestion(pastState(), it.id).last;
     const open = infoOpen(it.id);
-    html += `<div style="${sm && it !== g.items[0] ? 'margin-top:18px;padding-top:16px;border-top:2px solid var(--line)' : ''}">
+    html += `<div class="${ui.swapped === idx ? 'pop' : ''}" style="${sm && it !== g.items[0] ? 'margin-top:18px;padding-top:16px;border-top:2px solid var(--line)' : ''}">
       <div class="row between" style="align-items:flex-start"><h3>${esc(e.name)}${isDone(it) ? ' <span class="check">✓</span>' : ''}</h3><span class="muted small" style="white-space:nowrap;margin-top:4px">${it.planSets} × ${rangeLabel(it.id)}</span></div>
       ${musclesHtml(e)}
       ${flipHtml(it.id)}
@@ -567,11 +570,11 @@ function viewSession() {
     }
     html += `</div>
       <div class="ctrls" style="margin-top:8px"><button data-act="add-set" data-i="${idx}">+ serie</button>
-      ${!logged(it).length ? `<button data-act="swap" data-i="${idx}">Cambia (macchina occupata)</button>` : ''}
+      ${swapButtons(c, g, it, idx, usedIds)}
       ${!isDone(it) ? `<button data-act="skip" data-i="${idx}">${it.skipped ? 'Riprendi' : 'Salta'}</button>` : ''}</div>
     </div>`;
   }
-  ui.flash = null; ui.infoAnim = null;
+  ui.flash = null; ui.infoAnim = null; ui.swapped = null;
   html += `</section>`;
   const lastG = c.cur >= groups.length - 1;
   const gDone = g.items.every(i => isDone(i) || i.skipped);
@@ -580,6 +583,21 @@ function viewSession() {
     ${lastG ? `<button class="grow primary" data-act="list">Elenco ✓</button>` : `<button class="grow primary" data-act="goto" data-g="${c.cur + 1}">${gDone ? 'Prossimo esercizio →' : 'Avanti →'}</button>`}
   </div>`;
   return html;
+}
+
+// Cambi dentro la scheda: "Cambia attrezzo" (macchina occupata → cavo → manubri → ...) e
+// "Cambia esercizio" (un altro con lo stesso attrezzo; in superserie, alla stessa postazione del compagno)
+function swapButtons(c, g, it, idx, used) {
+  if (logged(it).length) return '';
+  const partner = g.items.length > 1 ? g.items.find(x => x !== it) : null;
+  const sameNext = E.nextSameSetup(state, it.id, used, partner?.id);
+  const setupNext = partner ? null : E.nextSetup(state, it.id, used);
+  return `${setupNext ? `<button data-act="swap-setup" data-i="${idx}">Cambia attrezzo</button>` : ''}${sameNext ? `<button data-act="swap-ex" data-i="${idx}">Cambia esercizio</button>` : ''}`;
+}
+function replaceEx(it, nid) {
+  const sg = E.suggestion(pastState(), nid);
+  Object.assign(it, { id: nid, kg: sg.kg, reps: sg.reps, note: sg.note, sets: [] }); delete it.adjKg; delete it.orig;
+  ui.draft = null; ui.editSet = null; ui.swapped = state.current.items.indexOf(it);
 }
 
 function logSet(eff) {
@@ -815,7 +833,7 @@ function viewImpostazioni() {
         <button class="ghost" data-act="snap" data-k="${x.k}">${ui.confirmSnap === x.k ? 'Conferma' : 'Ripristina'}</button></div>`; }).join('')}` : ''}
     <button class="danger" style="margin-top:14px" data-act="reset">${ui.confirmReset ? 'Tocca di nuovo per cancellare tutto' : 'Cancella tutti i dati'}</button>
   </section>
-  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.3 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.4 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
 }
 
 // ---------- Render ----------
@@ -913,19 +931,20 @@ document.addEventListener('click', ev => {
       [c.items[i], c.items[j]] = [c.items[j], c.items[i]];
       return rerender();
     }
-    case 'ov-swap': case 'swap': {
-      const it = c.items[i];
-      const orig = EX[it.orig || it.id]; it.orig = orig.id;
-      const pool = E.poolOf(state, orig.muscle).sort((a, b) => E.exPrio(state, b) - E.exPrio(state, a));
-      const ring = [...new Set([orig.id, orig.sub, ...pool, ...EXERCISES.filter(x => x.muscle === orig.muscle && visible(x)).map(x => x.id)])].filter(x => EX[x] && !EX[x].hidden);
-      const used = new Set(c.items.filter(x => x !== it).map(x => x.id));
-      const at = ring.indexOf(it.id);
-      const nid = [...ring.slice(at + 1), ...ring.slice(0, at)].find(x => !used.has(x));
-      if (!nid) { toast('Nessuna alternativa disponibile'); return; }
-      if (logged(it).length) return;
-      const sg = E.suggestion(pastState(), nid);
-      Object.assign(it, { id: nid, kg: sg.kg, reps: sg.reps, note: sg.note, sets: [] }); delete it.adjKg;
-      ui.draft = null; toast(`Cambiato con ${EX[nid].name}`); return rerender();
+    case 'swap-ex': case 'swap-setup': {
+      const it = c.items[i]; if (!it || logged(it).length) return;
+      const used = new Set(c.items.map(x => x.id));
+      const partner = it.ss ? c.items.find(x => x !== it && x.ss === it.ss) : null;
+      const nid = a === 'swap-ex' ? E.nextSameSetup(state, it.id, used, partner?.id) : E.nextSetup(state, it.id, used);
+      if (!nid) return;
+      replaceEx(it, nid); return rerender();
+    }
+    case 'swap-pair': {
+      const { groups } = curGroup(c); const g = groups[+el.dataset.g]; if (!g || g.items.length !== 2 || g.items.some(x => logged(x).length)) return;
+      const nx = E.nextSetupPair(state, g.items[0].id, g.items[1].id, new Set(c.items.map(x => x.id)));
+      if (!nx) return;
+      replaceEx(g.items[0], nx[0]); replaceEx(g.items[1], nx[1]); ui.swapped = null; ui.flash = null;
+      return rerender();
     }
     case 'ov-join': { const tag = 'u' + Date.now(); c.items[i].ss = tag; c.items[i + 1].ss = tag; const m = Math.max(c.items[i].planSets, c.items[i + 1].planSets); c.items[i].planSets = c.items[i + 1].planSets = m; return rerender(); }
     case 'ov-split': { const tag = c.items[i].ss; c.items.forEach(x => { if (x.ss === tag) x.ss = null; }); return rerender(); }
