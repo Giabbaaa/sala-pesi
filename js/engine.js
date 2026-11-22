@@ -497,29 +497,47 @@ export function finishSession(state, cur, now = Date.now()) {
   const kcal = kcalRange(state, minutes, { superset: items.some(i => i.ss), hard });
   session.kcal = kcal; session.minutes = minutes;
 
-  // Ciclo e scarico
-  const c = state.cycle;
-  if (cur.deload) {
-    c.deloadLeft = Math.max(0, c.deloadLeft - 1);
-    if (c.deloadLeft === 0) newCycle(state);
-  } else {
-    const info = cycleInfo(state);
-    const stalls = Object.keys(EX).filter(id => stalled(state, id)).length;
-    if (info.done >= c.length || (stalls >= 3 && info.done >= 6)) {
-      c.deloadLeft = 3;
-      // si decide ora se il ciclo è andato bene (durante lo scarico gli stalli si azzerano)
-      const sets = state.sessions.filter(s => s.cycle === c.n && !s.deload).flatMap(s => s.items.filter(i => i.id !== 'cardio').flatMap(i => i.sets));
-      c.levelUp = !!sets.length && sets.filter(x => x.eff === 'giusto').length / sets.length >= 0.5 && stalls < 3;
-    }
-  }
-  return { minutes, kcal, records, sets: all.length };
+  advanceCycle(state, !!cur.deload, cur.date);
+  return { id: session.id, minutes, kcal, records, sets: all.length };
 }
 
-function newCycle(state) {
+// Ciclo e scarico dopo una seduta (già aggiunta a state.sessions)
+function advanceCycle(state, deload, date) {
+  const c = state.cycle;
+  const startDeload = stalls => {
+    c.deloadLeft = 3;
+    // si decide ora se il ciclo è andato bene (durante lo scarico gli stalli si azzerano)
+    const sets = state.sessions.filter(s => s.cycle === c.n && !s.deload).flatMap(s => s.items.filter(i => i.id !== 'cardio').flatMap(i => i.sets));
+    c.levelUp = !!sets.length && sets.filter(x => x.eff === 'giusto').length / sets.length >= 0.5 && stalls < 3;
+  };
+  const stallCount = () => Object.keys(EX).filter(id => stalled(state, id)).length;
+  if (deload) {
+    if (!c.deloadLeft) startDeload(stallCount());       // solo ricostruendo dopo un'eliminazione
+    c.deloadLeft = Math.max(0, c.deloadLeft - 1);
+    if (c.deloadLeft === 0) newCycle(state, date);
+  } else {
+    const info = cycleInfo(state);
+    const stalls = stallCount();
+    if (info.done >= c.length || (stalls >= 3 && info.done >= 6)) startDeload(stalls);
+  }
+}
+
+// Elimina una seduta e ricalcola cicli e scarichi rigiocando le sedute rimaste
+export function deleteSession(state, id) {
+  const rest = state.sessions.filter(s => s.id !== id);
+  if (rest.length === state.sessions.length) return false;
+  const old = state.cycle;
+  state.cycle = { n: 1, level: 0, startCount: 0, length: old.length, deloadLeft: 0, goal: old.goal, history: [], levelUp: false };
+  state.sessions = [];
+  for (const s of rest) { s.cycle = state.cycle.n; state.sessions.push(s); advanceCycle(state, !!s.deload, s.date); }
+  return true;
+}
+
+function newCycle(state, date = dayKey()) {
   const c = state.cycle;
   const cycleSessions = state.sessions.filter(s => s.cycle === c.n && !s.deload);
   const up = !!c.levelUp;
-  c.history.push({ n: c.n, goal: c.goal, sessions: cycleSessions.length, levelUp: up, end: dayKey() });
+  c.history.push({ n: c.n, goal: c.goal, sessions: cycleSessions.length, levelUp: up, end: date });
   if (up) c.level = Math.min(2, c.level + 1);
   c.n += 1; c.startCount = state.sessions.filter(s => !s.deload).length; c.deloadLeft = 0; c.levelUp = false;
 }

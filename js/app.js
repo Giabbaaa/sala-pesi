@@ -15,6 +15,7 @@ const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } c
 if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
 
 const today = () => E.dayKey();
+const toTop = () => { const v = document.getElementById('view'); if (v) v.scrollTop = 0; };
 
 // ---------- Audio e schermo acceso ----------
 let actx = null;
@@ -103,6 +104,15 @@ function spark(values, h = 48) {
   return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><path d="${d}"/><circle cx="${l[0]}" cy="${l[1]}" r="4"/></svg>`;
 }
 
+const TRASH = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4zM6 9h12l-1 12H7zm4 2v8h1.5v-8zm2.5 0v8H14v-8z"/></svg>';
+// Tasto cestino per una seduta salvata: primo tocco chiede conferma, il secondo elimina
+function delButton(id) {
+  return ui.confirmDel === id
+    ? `<span class="row" style="gap:6px"><button class="danger" data-act="del-yes" data-id="${id}">Elimina</button><button data-act="del-no">Annulla</button></span>`
+    : `<button class="icon ghost danger" data-act="del" data-id="${id}" aria-label="Elimina allenamento">${TRASH}</button>`;
+}
+const dayLabel = k => { const n = E.DAY_NAMES[E.weekday(k)]; return `${n[0].toUpperCase()}${n.slice(1)} ${k.split('-').reverse().slice(0, 2).join('/')}`; };
+
 // ---------- OGGI ----------
 function ensureCurrent(force = false) {
   const c = state.current;
@@ -128,7 +138,7 @@ function viewOggi() {
 
   const sum = state.lastSummary;
   if (sum && sum.date === t) {
-    html += `<section class="card done-card"><div class="big-num">Fatto!</div>
+    html += `<section class="card done-card">${sum.id ? `<div class="del-corner">${delButton(sum.id)}</div>` : ''}<div class="big-num">Fatto!</div>
       <div class="summary" style="justify-content:center"><span><b>${sum.minutes}</b> min</span><span><b>${sum.kcal[0]}–${sum.kcal[1]}</b> kcal</span><span><b>${sum.sets}</b> serie</span></div>
       ${sum.records.length ? `<p><b>Record battuti</b></p>${sum.records.map(r => `<p>${esc(EX[r.id].name)} · ${kg(Math.round(r.e1rm))} kg stimati</p>`).join('')}` : '<p class="muted">Nessun record oggi: la costanza conta di più.</p>'}
     </section>`;
@@ -353,7 +363,7 @@ function logSet(eff) {
       if (allDone) {
         const nextG = groups.findIndex((gr, gi) => gi > c.cur && !gr.items.every(i => isDone(i) || i.skipped));
         const anyG = nextG >= 0 ? nextG : groups.findIndex(gr => !gr.items.every(i => isDone(i) || i.skipped));
-        if (anyG >= 0 && anyG !== c.cur) { c.cur = anyG; setTimeout(() => window.scrollTo(0, 0), 0); }
+        if (anyG >= 0 && anyG !== c.cur) { c.cur = anyG; setTimeout(() => toTop(), 0); }
       }
     }
   }
@@ -363,18 +373,19 @@ function logSet(eff) {
 
 async function endSession() {
   const c = state.current;
+  ui.undo = null; $('#toast').hidden = true;          // l'"Annulla" dell'ultima serie non vale più a seduta chiusa
   const res = E.finishSession(state, c);
   if (!res) {
     state.current = null; state.rest = null; ui.confirmEnd = false;
-    save(); keepAwake(false); window.scrollTo(0, 0); render();
+    save(); keepAwake(false); toTop(); render();
     toast('Nessuna serie registrata: seduta non salvata');
     return;
   }
   state.lastSummary = { date: c.date, ...res };
   const cyc = state.cycle;
-  if (cyc.history.length && cyc.history[cyc.history.length - 1].end === E.dayKey() && c.deload) state.cycleBanner = `Inizia il ciclo ${cyc.n}`;
+  if (cyc.history.length && cyc.history[cyc.history.length - 1].end === c.date && c.deload) state.cycleBanner = `Inizia il ciclo ${cyc.n}`;
   state.current = null; state.rest = null; ui.confirmEnd = false;
-  save(); keepAwake(false); window.scrollTo(0, 0); render();
+  save(); keepAwake(false); toTop(); render();
 }
 
 // ---------- PIANO ----------
@@ -468,6 +479,12 @@ function viewProgressi() {
     <div class="row" style="margin-top:10px"><span class="grow">Vita (cm)</span><input style="width:110px" type="text" inputmode="decimal" placeholder="${waist.length ? kg(waist[waist.length - 1].cm) : 'cm'}" data-in="waist"></div>
     ${waist.slice(-4).reverse().map(x => `<p class="small muted">${x.date.split('-').reverse().slice(0, 2).join('/')}: ${kg(x.cm)} cm</p>`).join('')}
   </section>`;
+
+  // Elenco allenamenti, con cestino
+  html += `<h2>Allenamenti</h2><section class="card">${[...ss].reverse().map(s => {
+    const n = s.items.reduce((a, i) => a + (i.id === 'cardio' ? 0 : (i.sets || []).length), 0);
+    return `<div class="mrow" style="align-items:center"><span><b>${dayLabel(s.date)}</b>${s.deload ? ' <span class="small muted">scarico</span>' : ''}<br><span class="small muted">${s.minutes || '?'} min · ${n} serie${s.kcal ? ` · ${s.kcal[0]}–${s.kcal[1]} kcal` : ''}</span></span>${delButton(s.id)}</div>`;
+  }).join('')}</section>`;
   return html;
 }
 
@@ -539,7 +556,7 @@ function download(name, text, type) {
 document.addEventListener('click', ev => {
   unlockAudio();
   const tab = ev.target.closest('[data-tab]');
-  if (tab) { ui.tab = tab.dataset.tab; ui.confirmReset = false; window.scrollTo(0, 0); render(); return; }
+  if (tab) { ui.tab = tab.dataset.tab; ui.confirmReset = false; ui.confirmDel = null; toTop(); render(); return; }
   const el = ev.target.closest('[data-act]'); if (!el) return;
   const a = el.dataset.act; const c = state.current;
   const i = +el.dataset.i; const d = +el.dataset.d;
@@ -572,8 +589,8 @@ document.addEventListener('click', ev => {
     }
     case 'ov-join': { const tag = 'u' + Date.now(); c.items[i].ss = tag; c.items[i + 1].ss = tag; const m = Math.max(c.items[i].planSets, c.items[i + 1].planSets); c.items[i].planSets = c.items[i + 1].planSets = m; return rerender(); }
     case 'ov-split': { const tag = c.items[i].ss; c.items.forEach(x => { if (x.ss === tag) x.ss = null; }); return rerender(); }
-    case 'start': c.start = Date.now(); c.cur = 0; c.forced = true; keepAwake(true); window.scrollTo(0, 0); return rerender();
-    case 'goto': c.cur = +el.dataset.g; ui.editSet = null; ui.draft = null; ui.confirmEnd = false; window.scrollTo(0, 0); return rerender();
+    case 'start': c.start = Date.now(); c.cur = 0; c.forced = true; keepAwake(true); toTop(); return rerender();
+    case 'goto': c.cur = +el.dataset.g; ui.editSet = null; ui.draft = null; ui.confirmEnd = false; toTop(); return rerender();
     case 'kg': { const it = c.items[ui.draft.i]; const inc = E.exSettings(state, it.id).inc; ui.draft.kg = Math.max(0, Math.round(((ui.draft.kg ?? 0) + d * inc) * 100) / 100); return render(); }
     case 'reps': { const it = c.items[ui.draft.i]; const step = EX[it.id].type === 'time' ? 5 : 1; ui.draft.reps = Math.max(1, ui.draft.reps + d * step); return render(); }
     case 'log': return logSet(el.dataset.eff);
@@ -588,7 +605,7 @@ document.addEventListener('click', ev => {
     case 'rest+': state.rest.end += 15000; save(); return tickTimer();
     case 'rest-skip': state.rest = null; save(); return tickTimer();
     case 'undo': if (ui.undo) { ui.undo(); ui.undo = null; $('#toast').hidden = true; } return;
-    case 'end': ui.confirmEnd = true; window.scrollTo(0, 0); return render();
+    case 'end': ui.confirmEnd = true; toTop(); return render();
     case 'end-no': ui.confirmEnd = false; return render();
     case 'end-yes': return endSession();
     case 'freq': state.settings.freq = +el.dataset.v; return rerender();
@@ -599,6 +616,16 @@ document.addEventListener('click', ev => {
     case 'plate': { const v = +el.dataset.v; const p = state.settings.plates; state.settings.plates = p.includes(v) ? p.filter(x => x !== v) : [...p, v]; return rerender(); }
     case 'ex-plates': { const id = el.dataset.id; const x = state.settings.ex[id] || {}; state.settings.ex[id] = { ...x, plates: !x.plates }; return rerender(); }
     case 'export': download(`sala-pesi-backup-${today()}.json`, JSON.stringify(state), 'application/json'); return;
+    case 'del': ui.confirmDel = +el.dataset.id; return render();
+    case 'del-no': ui.confirmDel = null; return render();
+    case 'del-yes': {
+      const id = +el.dataset.id; const s0 = state.sessions.find(s => s.id === id);
+      if (!s0 || !E.deleteSession(state, id)) { ui.confirmDel = null; return render(); }
+      if (state.lastSummary && (state.lastSummary.id === id || (state.lastSummary.date === s0.date && !state.sessions.some(s => s.date === s0.date)))) state.lastSummary = null;
+      if (state.current && !state.current.start) state.current = null;   // la seduta di oggi si ricompone senza quella eliminata
+      state.cycleBanner = null; ui.confirmDel = null;
+      save(); toast('Allenamento eliminato'); return render();
+    }
     case 'reset':
       if (!ui.confirmReset) { ui.confirmReset = true; return render(); }
       state = E.initialState(); ui.confirmReset = false; save(); toast('Dati cancellati'); return render();
