@@ -1,6 +1,6 @@
 // Logica dell'app: composizione dinamica della seduta, progressione dei carichi,
 // calendario consigliato, cicli, stime. Nessun accesso al DOM: testabile in Node.
-import { EX, MUSCLES, MUSCLE_ORDER, TYPE_RULES, TARGETS, DEFAULT_PRIORITY, DEFAULT_PLAN, START_LOADS, SEED } from './catalog.js';
+import { EX, EXERCISES, MUSCLES, MUSCLE_ORDER, TYPE_RULES, TARGETS, DEFAULT_PRIORITY, DEFAULT_PLAN, START_LOADS, SEED } from './catalog.js';
 
 // ---------- Date ----------
 export const pad = n => String(n).padStart(2, '0');
@@ -46,6 +46,12 @@ export function migrate(s) {
   out.settings = { ...base.settings, ...(s.settings || {}) };
   out.settings.priority = { ...base.settings.priority, ...(out.settings.priority || {}) };
   out.settings.plan = { ...base.settings.plan, ...(out.settings.plan || {}) };
+  // vecchio formato { anchor, comp } → priorità per esercizio (3 alta, 2 media, 1 bassa)
+  for (const m of Object.keys(out.settings.plan)) {
+    const p = out.settings.plan[m];
+    if (p && p.anchor) { const n = {}; for (const id of p.comp || []) n[id] = 2; n[p.anchor] = 3; out.settings.plan[m] = n; }
+    for (const id of Object.keys(out.settings.plan[m])) if (!EX[id]) delete out.settings.plan[m][id];
+  }
   out.cycle = { ...base.cycle, ...(s.cycle || {}) };
   out.body = { ...base.body, ...(s.body || {}) };
   out.nutrition = { ...base.nutrition, ...(s.nutrition || {}) };
@@ -58,8 +64,15 @@ export function exSettings(state, id) {
   const e = EX[id];
   const s = state.settings.ex[id] || {};
   const defInc = e.inc || (e.equip === 'manubri' ? 2 : 2.5);
-  return { inc: s.inc ?? defInc, incSet: s.inc != null, plates: !!s.plates, base: s.base ?? 0, note: s.note || '' };
+  const bar = e.equip === 'bilanciere';
+  return { inc: s.inc ?? defInc, incSet: s.inc != null, plates: s.plates ?? bar, base: s.base ?? (bar ? (e.bar ?? 20) : 0), note: s.note || '' };
 }
+
+// ---------- Priorità per esercizio ----------
+// plan[muscolo][id] = 3 alta (sempre, misura i progressi), 2 media (a rotazione), 1 bassa (ogni tanto)
+export const exPrio = (state, id) => (state.settings.plan[EX[id]?.muscle] || {})[id] || 0;
+export const anchorsOf = (state, m) => EXERCISES.filter(e => e.muscle === m && exPrio(state, e.id) === 3).map(e => e.id);
+export const poolOf = (state, m) => EXERCISES.filter(e => e.muscle === m && exPrio(state, e.id) > 0).map(e => e.id);
 
 // ---------- Storico ----------
 const workSets = it => (it.sets || []).filter(s => s && s.reps > 0);
@@ -196,8 +209,10 @@ export function stalled(state, id) {
   const lastDeload = [...state.sessions].reverse().find(s => s.deload)?.date || '';
   const h = history(state, id).filter(p => !p.deload && p.date > lastDeload);
   if (h.length < 4) return false;
-  const ref = bestE1rm(h[3].sets);
-  return h.slice(0, 3).every(p => bestE1rm(p.sets) <= ref + 0.01);
+  // a tempo o a corpo libero il "carico" sono le ripetizioni (o i secondi)
+  const score = ['time', 'bw'].includes(EX[id]?.type) ? sets => Math.max(...sets.map(x => x.reps)) : bestE1rm;
+  const ref = score(h[3].sets);
+  return h.slice(0, 3).every(p => score(p.sets) <= ref + 0.01);
 }
 
 // Pausa più lunga (in giorni) tra due sedute qualsiasi, da una data fino a oggi
@@ -212,8 +227,9 @@ export function suggestion(state, id, today = dayKey()) {
   const e = EX[id]; const r = TYPE_RULES[e.type]; const { inc } = exSettings(state, id);
   const h = history(state, id).filter(p => !p.deload);
   const isTime = e.type === 'time';
+  const noKg = isTime || e.type === 'bw';            // a tempo o a corpo libero: si progredisce con tempo/ripetizioni
   if (!h.length) {
-    const kg = isTime ? 0 : (START_LOADS[id] ?? null);
+    const kg = noKg ? 0 : (START_LOADS[id] ?? null);
     return { kg, reps: r.min, note: kg == null ? 'Prima serie di prova: scegli tu il carico' : '', last: null };
   }
   const last = h[0]; const sets = last.sets;
@@ -223,20 +239,20 @@ export function suggestion(state, id, today = dayKey()) {
   let kg = kg0, reps = Math.max(r.min, Math.min(r.max, minReps + (isTime ? 5 : 1))), note = '';
   const allTop = sets.every(s => s.reps >= r.max) && sets.every(s => s.eff !== 'limite');
   const allEasy = sets.every(s => s.eff === 'facile');
-  if (gap >= 28) { kg = roundTo(kg0 * 0.8, inc); reps = r.min; note = 'Ripresa dopo una pausa: −20%'; }
-  else if (gap >= 14) { kg = roundTo(kg0 * 0.9, inc); reps = r.min; note = 'Ripresa dopo una pausa: −10%'; }
-  else if (stalled(state, id)) { kg = roundTo(kg0 * 0.9, inc); reps = r.min; note = 'Fermo da 3 sedute: −10% e si risale'; }
+  if (gap >= 28) { kg = roundTo(kg0 * 0.8, inc); reps = r.min; note = noKg ? 'Ripresa dopo una pausa: si riparte dal minimo' : 'Ripresa dopo una pausa: −20%'; }
+  else if (gap >= 14) { kg = roundTo(kg0 * 0.9, inc); reps = r.min; note = noKg ? 'Ripresa dopo una pausa: si riparte dal minimo' : 'Ripresa dopo una pausa: −10%'; }
+  else if (stalled(state, id)) { kg = roundTo(kg0 * 0.9, inc); reps = r.min; note = noKg ? 'Fermo da 3 sedute: si riparte dal minimo' : 'Fermo da 3 sedute: −10% e si risale'; }
   else if (allTop) {
-    if (isTime) { reps = r.max; note = 'Tempo al massimo: prova una variante più dura'; }
+    if (noKg) { reps = r.max; note = isTime ? 'Tempo al massimo: prova una variante più dura' : 'Ripetizioni al massimo: prova una variante più dura o aggiungi peso'; }
     else {
       const steps = allEasy ? 2 : 1;
       kg = Math.min(kg0 + steps * inc, Math.max(kg0 + inc, roundTo(kg0 * 1.1, inc)));
       reps = r.min; note = `Sali di carico: +${fmtKg(kg - kg0)} kg`;
     }
-  } else if (sets[0].reps < r.min && sets[0].eff === 'limite' && !isTime) {
+  } else if (sets[0].reps < r.min && sets[0].eff === 'limite' && !noKg) {
     kg = Math.max(inc, roundTo(kg0 * 0.925, inc)); reps = r.min; note = 'Troppo pesante l’ultima volta: carico ridotto';
   }
-  if (isTime) kg = 0;
+  if (noKg) kg = 0;
   return { kg, reps, note, last };
 }
 
@@ -310,14 +326,15 @@ function lastUse(state, id) {
   return -1;
 }
 
-function anchorDue(state, m) {
-  const anchor = state.settings.plan[m].anchor;
+// Sedute (con lavoro su quel muscolo) passate dall'ultima volta che si è fatto l'esercizio
+function sinceUse(state, id, m) {
+  let n = 0;
   for (let i = state.sessions.length - 1; i >= 0; i--) {
     const s = state.sessions[i];
-    const trained = s.items.some(it => (EX[it.id]?.work[m] || 0) >= 1 && workSets(it).length);
-    if (trained) return !s.items.some(it => it.id === anchor);
+    if (s.items.some(it => it.id === id && workSets(it).length)) return n;
+    if (s.items.some(it => (EX[it.id]?.work[m] || 0) >= 1 && workSets(it).length)) n++;
   }
-  return true;
+  return Infinity;
 }
 
 function makeItem(state, id, sets, today) {
@@ -368,7 +385,7 @@ function dynamicSession(state, today, now) {
   const start = { ...need };
 
   // Ordine di lavoro: prima i muscoli con multiarticolari (danno serie indirette), poi priorità e arretrato
-  const hasCompoundAnchor = m => EX[settings.plan[m].anchor]?.type === 'multi';
+  const hasCompoundAnchor = m => anchorsOf(state, m).some(id => EX[id].type === 'multi');
   const order = [...MUSCLE_ORDER].sort((a, b) =>
     (hasCompoundAnchor(b) - hasCompoundAnchor(a)) ||
     (PRIO_RANK[settings.priority[a]] - PRIO_RANK[settings.priority[b]]) ||
@@ -379,10 +396,13 @@ function dynamicSession(state, today, now) {
     let r = need[m];
     if (r < 1) continue;
     let total = Math.min(10, Math.max(2, Math.round(r)));
-    const plan = settings.plan[m];
-    const comps = plan.comp.filter(id => EX[id] && !used.has(id)).sort((a, b) => lastUse(state, a) - lastUse(state, b));
-    let cands = anchorDue(state, m) ? [plan.anchor, ...comps] : [...comps, plan.anchor];
-    cands = cands.filter(id => EX[id] && !used.has(id));
+    // Candidati: prima le priorità alte, poi le medie a rotazione, le basse solo ogni tanto
+    // (una bassa passa davanti alle medie se non si fa da almeno 6 sedute di quel muscolo)
+    const lru = (a, b) => lastUse(state, a) - lastUse(state, b);
+    const by = lv => poolOf(state, m).filter(id => exPrio(state, id) === lv && !used.has(id)).sort(lru);
+    const low = by(1); const due = low.filter(id => sinceUse(state, id, m) >= 6).slice(0, 1);
+    const cands = [...by(3), ...due, ...by(2), ...low.filter(id => !due.includes(id))];
+    if (!cands.length) continue;
     // 1 esercizio fino a 4 serie, 2 fino a 8, poi 3 (se ce ne sono abbastanza); max 5 serie per esercizio
     const want = total <= 4 ? 1 : total <= 8 ? 2 : 3;
     const k = Math.max(1, Math.min(want, cands.length));
@@ -411,7 +431,7 @@ function dynamicSession(state, today, now) {
       const big = [...exs].sort((a, b) => b.planSets - a.planSets)[0];
       if (big.planSets > 2) { big.planSets--; return true; }
       if (exs.length > 1) {
-        const drop = exs.find(it => it.id !== settings.plan[m].anchor) || exs[exs.length - 1];
+        const drop = [...exs].sort((a, b) => exPrio(state, a.id) - exPrio(state, b.id))[0];
         items.splice(items.indexOf(drop), 1); return true;
       }
     }
@@ -456,7 +476,7 @@ function dynamicSession(state, today, now) {
   }
 
   // Una riga che spiega il perché
-  const behind = MUSCLE_ORDER.filter(m => settings.priority[m] !== 'minima' && start[m] >= 2)
+  const behind = MUSCLE_ORDER.filter(m => settings.priority[m] !== 'minima' && start[m] >= 2 && poolOf(state, m).length)
     .sort((a, b) => start[b] / target[b] - start[a] / target[a]);
   const names = [];
   for (const m of behind) {
@@ -489,7 +509,7 @@ export function finishSession(state, cur, now = Date.now()) {
   // record: miglior massimale stimato rispetto allo storico precedente
   const records = [];
   for (const it of items) {
-    if (!EX[it.id] || !it.sets.length || EX[it.id].type === 'time') continue;
+    if (!EX[it.id] || !it.sets.length || (EX[it.id].type === 'time' || EX[it.id].type === 'bw')) continue;
     const prev = history(state, it.id);
     const prevBest = Math.max(0, ...prev.map(p => bestE1rm(p.sets)));
     const now1 = bestE1rm(it.sets);
@@ -580,7 +600,7 @@ export function recordDay(state, cur, now = Date.now()) {
     const others = { sessions: state.sessions.filter(x => x !== s) };
     s.records = [];
     for (const it of items) {
-      if (!EX[it.id] || !it.sets.length || EX[it.id].type === 'time') continue;
+      if (!EX[it.id] || !it.sets.length || (EX[it.id].type === 'time' || EX[it.id].type === 'bw')) continue;
       const prev = history(others, it.id);
       const prevBest = Math.max(0, ...prev.map(p => bestE1rm(p.sets)));
       const best = bestE1rm(it.sets);
