@@ -87,8 +87,7 @@ function calendarCard() {
   const lbl = E.nextLabel(state, today());
   const doneToday = state.sessions.some(s => s.date === today());
   return `<section class="card">
-    <div class="row between"><div class="next">Prossimo allenamento<b>${doneToday && lbl === 'oggi' ? '—' : esc(lbl)}</b></div>
-    <button class="ghost small" data-act="ics">Aggiungi al Calendario</button></div>
+    <div class="next">Prossimo allenamento<b>${doneToday && lbl === 'oggi' ? '—' : esc(lbl)}</b></div>
     ${stripHtml()}
   </section>`;
 }
@@ -482,7 +481,6 @@ function viewImpostazioni() {
   return `<h1>Impostazioni</h1>
   <h2>Allenamento</h2><section class="card stack">
     <div class="row between"><span>Durata seduta</span><span class="seg">${[55, 65, 75].map(v => `<button class="${s.sessionMinutes === v ? 'on' : ''}" data-act="dur" data-v="${v}">${v}′</button>`).join('')}</span></div>
-    <div class="row between"><span>Ora abituale (per il Calendario)</span><input type="time" style="width:120px" value="${s.gymTime}" data-in="gymtime"></div>
   </section>
   <h2>Dischi disponibili</h2><section class="card"><div class="chips">${[25, 20, 15, 10, 5, 2.5, 1.25].map(p => `<button class="${s.plates.includes(p) ? 'on' : ''}" data-act="plate" data-v="${p}">${kg(p)} kg</button>`).join('')}</div>
     <p class="small muted" style="margin-top:8px">Per gli attrezzi a dischi l’app ti dice cosa mettere per lato.</p></section>
@@ -529,7 +527,6 @@ document.addEventListener('click', ev => {
   switch (a) {
     case 'intro-ok': state.seenIntro = true; return rerender();
     case 'cycle-ok': state.cycleBanner = null; return rerender();
-    case 'ics': { const t = E.icsFor(state); if (t) download('allenamento.ics', t, 'text/calendar'); return; }
     case 'force': state.current = E.compose(state, today()); state.current.forced = true; return rerender();
     case 'recompose': { const f = c?.forced; state.current = E.compose(state, today()); state.current.forced = f; toast('Seduta ricomposta'); return rerender(); }
     case 'ov-sets': c.items[i].planSets = Math.max(1, Math.min(8, c.items[i].planSets + d)); return rerender();
@@ -600,7 +597,6 @@ document.addEventListener('change', ev => {
     case 'anchor': { const p = state.settings.plan[el.dataset.m]; p.comp = p.comp.filter(x => x !== el.value); if (!p.comp.includes(p.anchor)) p.comp.unshift(p.anchor); p.anchor = el.value; if (c && !c.start) state.current = null; break; }
     case 'weight': case 'cp-weight': { const v = num(); if (!(v > 30 && v < 300)) return; const w = state.body.weights.filter(x => x.date !== today()); w.push({ date: today(), kg: v }); w.sort((a, b) => a.date.localeCompare(b.date)); state.body.weights = w; E.nutritionCheck(state); toast('Peso salvato'); break; }
     case 'waist': case 'cp-waist': { const v = num(); if (!(v > 40 && v < 200)) return; const w = state.body.waist.filter(x => x.date !== today()); w.push({ date: today(), cm: v }); state.body.waist = w; toast('Vita salvata'); break; }
-    case 'gymtime': state.settings.gymTime = el.value || '18:30'; break;
     case 'ex-inc': state.settings.ex[el.dataset.id] = { ...(state.settings.ex[el.dataset.id] || {}), inc: +el.value }; break;
     case 'ex-base': state.settings.ex[el.dataset.id] = { ...(state.settings.ex[el.dataset.id] || {}), base: num() || 0 }; break;
     case 'import': {
