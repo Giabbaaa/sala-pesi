@@ -25,7 +25,6 @@ export function initialState() {
     settings: {
       freq: 3,
       unavailable: [],
-      gymTime: '18:30',
       priority: { ...DEFAULT_PRIORITY },
       plan: JSON.parse(JSON.stringify(DEFAULT_PLAN)),
       ex: {},                        // per esercizio: { inc, plates, base, note }
@@ -109,37 +108,36 @@ export function daysSince(state, muscle, today = dayKey()) {
 }
 
 // ---------- Calendario consigliato ----------
-const GAPS = { 2: [3, 4], 3: [2, 2, 3], 4: [2, 1, 2, 2] };
-
-function nextAvailable(state, k) {
-  for (let i = 0; i < 7 && state.settings.unavailable.includes(weekday(k)); i++) k = addDays(k, 1);
-  return k;
-}
-
+// Regole: al massimo "sedute" allenamenti in ogni finestra di 7 giorni (contando quelli fatti davvero),
+// stacco preferito di almeno 7/sedute giorni (2 sedute → 3, 3 → 2, 4 → 1), giorni non disponibili saltati,
+// mai 3 giorni di fila. Se lo stacco preferito porterebbe troppo in là, si accetta un giorno più vicino.
 const doneDays = state => new Set(state.sessions.map(s => s.date));
 
-// Restituisce i prossimi giorni consigliati (da oggi in poi, max ~14 giorni)
 export function recommendedDays(state, today = dayKey()) {
-  const done = doneDays(state);
-  const gaps = GAPS[state.settings.freq] || GAPS[3];
-  let idx = state.sessions.length;
+  const freq = state.settings.freq || 3;
+  const minGap = Math.max(1, Math.floor(7 / freq));
+  const late = Math.ceil(7 / freq);
+  const unav = state.settings.unavailable || [];
+  const taken = doneDays(state);
+  const inWindow = k => { let n = 0; for (let i = 1; i <= 6; i++) if (taken.has(addDays(k, -i))) n++; return n; };
+  const fits = k => !unav.includes(weekday(k)) && !(taken.has(addDays(k, -1)) && taken.has(addDays(k, -2))) && inWindow(k) < freq;
+  const next = (from, minDay) => {
+    let relaxed = null;
+    for (let g = 1; g <= 21; g++) {
+      const k = from ? addDays(from, g) : addDays(minDay, g - 1);
+      if (k < minDay || !fits(k)) continue;
+      if (!from || g >= minGap) return relaxed && g > late ? relaxed : k;
+      if (!relaxed) relaxed = k;
+    }
+    return relaxed;
+  };
   const last = state.sessions.length ? state.sessions[state.sessions.length - 1].date : null;
-  let cand;
-  if (!last) cand = today;
-  else {
-    cand = addDays(last, gaps[idx % gaps.length]);
-    if (cand < today) cand = today;            // seduta saltata: primo giorno utile
-    if (last === today) cand = addDays(today, gaps[idx % gaps.length]);
-  }
+  let cand = last ? next(last, addDays(last, 1)) : null;
+  if (!cand || cand < today) cand = next(null, today);      // seduta saltata: primo giorno utile da oggi
   const out = [];
-  const consec = new Set(done);
-  for (let guard = 0; guard < 20 && out.length < 6; guard++) {
-    cand = nextAvailable(state, cand);
-    // mai 3 giorni di fila
-    if (consec.has(addDays(cand, -1)) && consec.has(addDays(cand, -2))) { cand = addDays(cand, 1); continue; }
-    out.push(cand); consec.add(cand);
-    idx++;
-    cand = addDays(cand, gaps[idx % gaps.length]);
+  while (cand && out.length < 6) {
+    out.push(cand); taken.add(cand);
+    cand = next(cand, addDays(cand, 1));
   }
   return out;
 }
@@ -165,32 +163,22 @@ export function nextLabel(state, today = dayKey()) {
   return DAY_NAMES[weekday(k)] + (d > 6 ? ` ${parseDay(k).getDate()}` : '');
 }
 
-// File .ics per il Calendario di iPhone, con avviso la mattina
-export function icsFor(state, today = dayKey()) {
-  const k = recommendedDays(state, today)[0];
-  if (!k) return null;
-  const [hh, mm] = state.settings.gymTime.split(':').map(Number);
-  const d = k.replace(/-/g, '');
-  const start = `${d}T${pad(hh)}${pad(mm)}00`;
-  const endMin = hh * 60 + mm + state.settings.sessionMinutes;
-  const end = `${d}T${pad(Math.floor(endMin / 60) % 24)}${pad(endMin % 60)}00`;
-  const before = Math.max(60, hh * 60 + mm - 8 * 60); // avviso alle 8 del mattino
-  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
-  return [
-    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Sala Pesi//IT', 'CALSCALE:GREGORIAN',
-    'BEGIN:VEVENT', `UID:salapesi-${d}@giabbaaa.github.io`, `DTSTAMP:${stamp}`,
-    `DTSTART:${start}`, `DTEND:${end}`, 'SUMMARY:Allenamento sala pesi',
-    'DESCRIPTION:Seduta consigliata dall’app Sala Pesi',
-    'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Oggi allenamento', `TRIGGER:-PT${before}M`, 'END:VALARM',
-    'END:VEVENT', 'END:VCALENDAR', ''].join('\r\n');
-}
-
 // ---------- Ciclo ----------
 export function cycleInfo(state) {
   const c = state.cycle;
   const done = state.sessions.filter(s => !s.deload).length - c.startCount;
   return { n: c.n, session: Math.min(done + 1, c.length), done, length: c.length, deloadLeft: c.deloadLeft, goal: c.goal,
     checkpoint: done > 0 && done % 12 === 0 };
+}
+
+// Punto di controllo: dopo la 12a seduta del ciclo, finché non si inserisce la vita
+export function checkpointDue(state) {
+  const c = state.cycle;
+  if (c.deloadLeft > 0) return false;
+  const real = state.sessions.filter(s => !s.deload);
+  const twelfth = real[c.startCount + 11];
+  if (!twelfth) return false;
+  return !state.body.waist.some(w => w.date >= twelfth.date);
 }
 
 export const levelOf = state => Math.min(state.cycle.level, 2);
@@ -208,6 +196,14 @@ export function stalled(state, id) {
   return h.slice(0, 3).every(p => bestE1rm(p.sets) <= ref + 0.01);
 }
 
+// Pausa più lunga (in giorni) tra due sedute qualsiasi, da una data fino a oggi
+export function longestBreak(state, from, today = dayKey()) {
+  const days = [...new Set(state.sessions.map(s => s.date).filter(d => d > from && d < today))].sort();
+  let prev = from, max = 0;
+  for (const d of [...days, today]) { max = Math.max(max, diffDays(d, prev)); prev = d; }
+  return max;
+}
+
 export function suggestion(state, id, today = dayKey()) {
   const e = EX[id]; const r = TYPE_RULES[e.type]; const { inc } = exSettings(state, id);
   const h = history(state, id).filter(p => !p.deload);
@@ -219,8 +215,8 @@ export function suggestion(state, id, today = dayKey()) {
   const last = h[0]; const sets = last.sets;
   const kg0 = sets[0].kg || 0;
   const minReps = Math.min(...sets.map(s => s.reps));
-  const gap = diffDays(today, last.date);
-  let kg = kg0, reps = Math.min(r.max, minReps + (isTime ? 5 : 1)), note = '';
+  const gap = longestBreak(state, last.date, today);
+  let kg = kg0, reps = Math.max(r.min, Math.min(r.max, minReps + (isTime ? 5 : 1))), note = '';
   const allTop = sets.every(s => s.reps >= r.max) && sets.every(s => s.eff !== 'limite');
   const allEasy = sets.every(s => s.eff === 'facile');
   if (gap >= 28) { kg = roundTo(kg0 * 0.8, inc); reps = r.min; note = 'Ripresa dopo una pausa: −20%'; }
@@ -251,12 +247,12 @@ export function platesPerSide(state, id, kg) {
   const s = exSettings(state, id);
   if (!s.plates || kg == null) return null;
   let side = (kg - s.base) / 2;
-  if (side <= 0) return [];
   const out = [];
+  if (side <= 0) return { plates: out, rest: 0 };
   for (const p of [...state.settings.plates].sort((a, b) => b - a)) {
     while (side >= p - 1e-9) { out.push(p); side -= p; }
   }
-  return out;
+  return { plates: out, rest: Math.round(side * 100) / 100 };
 }
 
 // ---------- Stime ----------
@@ -350,7 +346,7 @@ export function compose(state, today = dayKey(), now = Date.now()) {
 function dynamicSession(state, today, now) {
   const { settings } = state;
   const freq = settings.freq;
-  const done = setsByMuscle(state, addDays(today, -3), addDays(today, -1));
+  const done = setsByMuscle(state, addDays(today, -3), today);
   const future = recommendedDays(state, today).filter(k => k > today && diffDays(k, today) <= 3).length;
   const need = {}, target = {}, light = [];
   for (const m of MUSCLE_ORDER) {
@@ -377,13 +373,17 @@ function dynamicSession(state, today, now) {
   const items = []; const used = new Set();
   for (const m of order) {
     let r = need[m];
-    if (r < 1.5) continue;
+    if (r < 1) continue;
     let total = Math.min(10, Math.max(2, Math.round(r)));
     const plan = settings.plan[m];
     const comps = plan.comp.filter(id => EX[id] && !used.has(id)).sort((a, b) => lastUse(state, a) - lastUse(state, b));
     let cands = anchorDue(state, m) ? [plan.anchor, ...comps] : [...comps, plan.anchor];
     cands = cands.filter(id => EX[id] && !used.has(id));
-    const chunks = total <= 4 ? [total] : total <= 8 ? [Math.ceil(total / 2), Math.floor(total / 2)] : [4, 3, total - 7];
+    // 1 esercizio fino a 4 serie, 2 fino a 8, poi 3 (se ce ne sono abbastanza); max 5 serie per esercizio
+    const want = total <= 4 ? 1 : total <= 8 ? 2 : 3;
+    const k = Math.max(1, Math.min(want, cands.length));
+    total = Math.min(total, k * 5);
+    const chunks = Array.from({ length: k }, (_, i) => Math.floor(total / k) + (i < total % k ? 1 : 0));
     chunks.forEach((n, i) => {
       const id = cands[i]; if (!id || n < 1) return;
       used.add(id);
@@ -397,14 +397,25 @@ function dynamicSession(state, today, now) {
   const limit = settings.sessionMinutes + 3;
   const prioOf = it => settings.priority[EX[it.id].muscle];
   const muscleSets = m => items.filter(it => EX[it.id].muscle === m).reduce((a, it) => a + it.planSets, 0);
+  // Taglio di una serie: dal muscolo con più serie; prima si accorcia l'esercizio più lungo,
+  // poi si toglie un complementare (l'àncora resta sempre)
+  const cutOne = level => {
+    const muscles = [...new Set(items.filter(it => prioOf(it) === level).map(it => EX[it.id].muscle))]
+      .filter(m => muscleSets(m) > 2).sort((a, b) => muscleSets(b) - muscleSets(a));
+    for (const m of muscles) {
+      const exs = items.filter(it => EX[it.id].muscle === m);
+      const big = [...exs].sort((a, b) => b.planSets - a.planSets)[0];
+      if (big.planSets > 2) { big.planSets--; return true; }
+      if (exs.length > 1) {
+        const drop = exs.find(it => it.id !== settings.plan[m].anchor) || exs[exs.length - 1];
+        items.splice(items.indexOf(drop), 1); return true;
+      }
+    }
+    return false;
+  };
   for (const level of ['normale', 'alta']) {
     let guard = 0;
-    while (itemMinutes(items) > limit && guard++ < 60) {
-      const cand = items.filter(it => prioOf(it) === level && muscleSets(EX[it.id].muscle) > 2)
-        .sort((a, b) => muscleSets(EX[b.id].muscle) - muscleSets(EX[a.id].muscle) || b.planSets - a.planSets)[0];
-      if (!cand) break;
-      if (cand.planSets > 2) cand.planSets--; else items.splice(items.indexOf(cand), 1);
-    }
+    while (itemMinutes(items) > limit && guard++ < 80 && cutOne(level));
   }
 
   // Superserie: bicipiti + tricipiti, laterali + posteriori (solo isolamenti)
@@ -463,7 +474,14 @@ const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 // ---------- Fine seduta ----------
 export function finishSession(state, cur, now = Date.now()) {
   const items = cur.items.map(it => ({ id: it.id, ss: it.ss, planSets: it.planSets, sets: (it.sets || []).filter(Boolean), skipped: it.skipped, minutes: it.minutes }));
-  const session = { id: now, date: cur.date, start: cur.start || now, end: now, items, deload: cur.deload, seed: cur.seed, cycle: state.cycle.n };
+  const all = items.flatMap(i => i.sets);
+  if (!all.length) return null;                       // nessuna serie: la seduta non conta
+  const start = cur.start || now;
+  const lastT = Math.max(start, ...all.map(x => x.t || 0));
+  const cardioMin = items.filter(i => i.id === 'cardio' && i.sets.length).reduce((a, i) => a + (i.minutes || 0), 0);
+  // se Termina arriva molto dopo l'ultima serie (app dimenticata aperta), la fine è l'ultima serie
+  const end = now - lastT > 30 * 60000 ? lastT + (cardioMin + 2) * 60000 : now;
+  const session = { id: now, date: cur.date, start, end, items, deload: cur.deload, seed: cur.seed, cycle: state.cycle.n };
   // record: miglior massimale stimato rispetto allo storico precedente
   const records = [];
   for (const it of items) {
@@ -475,7 +493,6 @@ export function finishSession(state, cur, now = Date.now()) {
   }
   state.sessions.push(session);
   const minutes = Math.max(1, Math.round((session.end - session.start) / 60000));
-  const all = items.flatMap(i => i.sets);
   const hard = all.length && all.filter(s => s.eff !== 'facile').length / all.length > 0.5;
   const kcal = kcalRange(state, minutes, { superset: items.some(i => i.ss), hard });
   session.kcal = kcal; session.minutes = minutes;
@@ -488,7 +505,12 @@ export function finishSession(state, cur, now = Date.now()) {
   } else {
     const info = cycleInfo(state);
     const stalls = Object.keys(EX).filter(id => stalled(state, id)).length;
-    if (info.done >= c.length || (stalls >= 3 && info.done >= 6)) c.deloadLeft = 3;
+    if (info.done >= c.length || (stalls >= 3 && info.done >= 6)) {
+      c.deloadLeft = 3;
+      // si decide ora se il ciclo è andato bene (durante lo scarico gli stalli si azzerano)
+      const sets = state.sessions.filter(s => s.cycle === c.n && !s.deload).flatMap(s => s.items.filter(i => i.id !== 'cardio').flatMap(i => i.sets));
+      c.levelUp = !!sets.length && sets.filter(x => x.eff === 'giusto').length / sets.length >= 0.5 && stalls < 3;
+    }
   }
   return { minutes, kcal, records, sets: all.length };
 }
@@ -496,12 +518,10 @@ export function finishSession(state, cur, now = Date.now()) {
 function newCycle(state) {
   const c = state.cycle;
   const cycleSessions = state.sessions.filter(s => s.cycle === c.n && !s.deload);
-  const sets = cycleSessions.flatMap(s => s.items.flatMap(i => i.sets));
-  const ok = sets.length && sets.filter(s => s.eff === 'giusto').length / sets.length >= 0.5;
-  const stalls = Object.keys(EX).filter(id => stalled(state, id)).length;
-  c.history.push({ n: c.n, goal: c.goal, sessions: cycleSessions.length, levelUp: ok && stalls < 3, end: dayKey() });
-  if (ok && stalls < 3) c.level = Math.min(2, c.level + 1);
-  c.n += 1; c.startCount = state.sessions.filter(s => !s.deload).length; c.deloadLeft = 0;
+  const up = !!c.levelUp;
+  c.history.push({ n: c.n, goal: c.goal, sessions: cycleSessions.length, levelUp: up, end: dayKey() });
+  if (up) c.level = Math.min(2, c.level + 1);
+  c.n += 1; c.startCount = state.sessions.filter(s => !s.deload).length; c.deloadLeft = 0; c.levelUp = false;
 }
 
 // ---------- Alimentazione ----------

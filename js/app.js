@@ -19,8 +19,10 @@ const today = () => E.dayKey();
 // ---------- Audio e schermo acceso ----------
 let actx = null;
 function unlockAudio() {
-  if (actx) return;
-  try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch { actx = null; }
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state !== 'running') actx.resume().catch(() => {});
+  } catch { actx = null; }
 }
 function beep(n = 3) {
   if (!actx) return;
@@ -120,6 +122,7 @@ function viewOggi() {
     ${!matchMedia('(display-mode: standalone)').matches && !navigator.standalone ? '<p class="small">Per averla come app: in Safari tocca Condividi → Aggiungi alla schermata Home.</p>' : ''}
     <button class="ghost" data-act="intro-ok">Ho capito</button></section>`;
 
+  if (state.notice) html += `<section class="alert small">${esc(state.notice)} <button class="ghost" data-act="notice-ok">OK</button></section>`;
   html += `<h1>Oggi</h1>`;
   html += calendarCard();
 
@@ -132,10 +135,9 @@ function viewOggi() {
     if (!c || c.date !== t) return html;
   }
 
-  const ci = E.cycleInfo(state);
-  if (ci.checkpoint && !state.body.waist.some(w => w.date === t) && !(sum && sum.date === t)) {
-    html += `<section class="alert"><b>Punto di controllo (seduta ${ci.done})</b><p class="small">Peso di stamattina e circonferenza vita all’ombelico.</p>
-      <div class="row" style="margin-top:8px"><input type="number" inputmode="decimal" step="0.1" placeholder="Peso kg" data-in="cp-weight"><input type="number" inputmode="decimal" step="0.5" placeholder="Vita cm" data-in="cp-waist"></div></section>`;
+  if (E.checkpointDue(state)) {
+    html += `<section class="alert"><b>Punto di controllo del ciclo</b><p class="small">Peso di stamattina e circonferenza vita all’altezza dell’ombelico.</p>
+      <div class="row" style="margin-top:8px"><input type="text" inputmode="decimal" placeholder="Peso kg" data-in="cp-weight"><input type="text" inputmode="decimal" placeholder="Vita cm" data-in="cp-waist"></div></section>`;
   }
   if (state.cycleBanner) html += `<section class="alert"><b>${esc(state.cycleBanner)}</b><p class="small">Se vuoi, in Piano puoi cambiare gli esercizi àncora con una variante.</p><button class="ghost" data-act="cycle-ok">OK</button></section>`;
 
@@ -199,8 +201,18 @@ function overview(c) {
     ${rows}
     <select data-in="ov-add" style="margin-top:12px"><option value="">+ Aggiungi esercizio</option>${addOpts}</select>
   </section>
-  <button class="primary big" data-act="start">Inizia</button>
+  <button class="primary big" data-act="start" ${c.items.length ? '' : 'disabled'}>Inizia</button>
   <div class="row" style="justify-content:center;margin-top:6px"><button class="ghost" data-act="recompose">Ricomponi la seduta</button></div>`;
+}
+
+// Una superserie vale solo se i suoi esercizi sono uno dopo l'altro: altrimenti si scioglie
+function tidySupersets(c) {
+  const items = c.items;
+  items.forEach((x, k) => {
+    if (!x.ss) return;
+    const near = items[k - 1]?.ss === x.ss || items[k + 1]?.ss === x.ss;
+    if (!near || x.id === 'cardio') x.ss = null;
+  });
 }
 
 // ---------- Seduta in corso ----------
@@ -220,6 +232,7 @@ function setDefaults(c, it, i) {
 function viewSession() {
   const c = state.current;
   const { groups, g } = curGroup(c);
+  if (!g) return `<section class="card"><h3>Nessun esercizio</h3><p class="muted">La seduta è vuota.</p><button class="primary big" style="margin-top:10px" data-act="end-yes">Chiudi la seduta</button></section>`;
   const mins = Math.floor((Date.now() - c.start) / 60000);
   const segs = groups.map((gr, gi) => {
     const done = gr.items.every(isDone), skip = gr.items.every(i => i.skipped);
@@ -288,7 +301,7 @@ function viewSession() {
             ${e.type === 'time' ? '<div></div>' : `<div class="stepper"><button data-act="kg" data-d="-1" aria-label="Meno peso">−</button><b><input class="kgin" type="text" inputmode="decimal" value="${d.kg == null ? '' : kg(d.kg)}" placeholder="?" data-in="draft-kg" aria-label="Carico in kg"><small>kg</small></b><button data-act="kg" data-d="1" aria-label="Più peso">+</button></div>`}
             <div class="stepper"><button data-act="reps" data-d="-1" aria-label="Meno">−</button><b>${d.reps}<small>${e.type === 'time' ? 'secondi' : 'ripetizioni'}</small></b><button data-act="reps" data-d="1" aria-label="Più">+</button></div>
           </div>
-          ${plates ? `<p class="small muted" style="margin:-2px 0 8px">Per lato: ${plates.length ? plates.map(kg).join(' + ') : 'nessun disco'}</p>` : ''}
+          ${plates ? `<p class="small muted" style="margin:-2px 0 8px">Per lato: ${plates.plates.length ? plates.plates.map(kg).join(' + ') : 'nessun disco'}${plates.rest > 0 ? ` (mancano ${kg(plates.rest)} kg per lato con i tuoi dischi)` : ''}</p>` : ''}
           <div class="effort">
             <button class="e1" data-act="log" data-eff="facile">Facile<small>4+ in riserva</small></button>
             <button class="e2" data-act="log" data-eff="giusto">Giusto<small>1–3 in riserva</small></button>
@@ -320,6 +333,7 @@ function logSet(eff) {
   if (e.type !== 'time' && d.kg == null) { toast('Scegli prima il carico'); return; }
   const set = { kg: e.type === 'time' ? 0 : d.kg, reps: d.reps, eff, t: Date.now() };
   const wasEdit = !!it.sets[d.s];
+  if (e.type !== 'time' && !E.exSettings(state, it.id).incSet) state.settings.ex[it.id] = { ...(state.settings.ex[it.id] || {}), inc: E.exSettings(state, it.id).inc };
   const before = JSON.stringify(c);
   it.sets[d.s] = set;
   // Al limite già alla prima serie sotto il minimo: le serie seguenti si alleggeriscono
@@ -350,6 +364,12 @@ function logSet(eff) {
 async function endSession() {
   const c = state.current;
   const res = E.finishSession(state, c);
+  if (!res) {
+    state.current = null; state.rest = null; ui.confirmEnd = false;
+    save(); keepAwake(false); window.scrollTo(0, 0); render();
+    toast('Nessuna serie registrata: seduta non salvata');
+    return;
+  }
   state.lastSummary = { date: c.date, ...res };
   const cyc = state.cycle;
   if (cyc.history.length && cyc.history[cyc.history.length - 1].end === E.dayKey() && c.deload) state.cycleBanner = `Inizia il ciclo ${cyc.n}`;
@@ -445,7 +465,7 @@ function viewProgressi() {
   const waist = state.body.waist;
   html += `<h2>Peso e vita</h2><section class="card">
     ${w.length ? `<div class="row between"><span>Media 7 giorni</span><b>${kg(Math.round(E.weightAvg(state, w[w.length - 1].date) * 10) / 10)} kg</b></div>${spark(avgs)}` : '<p class="muted">Inserisci il peso in Alimentazione.</p>'}
-    <div class="row" style="margin-top:10px"><span class="grow">Vita (cm)</span><input style="width:110px" type="number" inputmode="decimal" step="0.5" placeholder="${waist.length ? kg(waist[waist.length - 1].cm) : 'cm'}" data-in="waist"></div>
+    <div class="row" style="margin-top:10px"><span class="grow">Vita (cm)</span><input style="width:110px" type="text" inputmode="decimal" placeholder="${waist.length ? kg(waist[waist.length - 1].cm) : 'cm'}" data-in="waist"></div>
     ${waist.slice(-4).reverse().map(x => `<p class="small muted">${x.date.split('-').reverse().slice(0, 2).join('/')}: ${kg(x.cm)} cm</p>`).join('')}
   </section>`;
   return html;
@@ -467,7 +487,7 @@ function viewCibo() {
   </section>
   ${n.last ? `<section class="alert small"><b>Ultima modifica:</b> ${esc(n.last)}</section>` : ''}
   <h2>Peso</h2><section class="card">
-    <div class="row"><span class="grow">Peso di stamattina, a digiuno</span><input style="width:110px" type="number" inputmode="decimal" step="0.1" placeholder="${todayW ? kg(todayW.kg) : 'kg'}" data-in="weight"></div>
+    <div class="row"><span class="grow">Peso di stamattina, a digiuno</span><input style="width:110px" type="text" inputmode="decimal" placeholder="${todayW ? kg(todayW.kg) : 'kg'}" data-in="weight"></div>
     ${avg != null ? `<div class="kv" style="margin-top:8px"><span>Media 7 giorni</span><b>${kg(Math.round(avg * 10) / 10)} kg</b>
       ${avgOld != null ? `<span class="small muted" style="grid-column:1/-1">${avg - avgOld <= 0 ? '' : '+'}${kg(Math.round((avg - avgOld) * 10) / 10)} kg rispetto a 7 giorni prima</span>` : ''}</div>` : ''}
     <p class="small muted">Pesati 2–3 volte ogni 7 giorni. Ogni 14 giorni l’app corregge le calorie se il calo è troppo lento (meno di 0,4 kg a settimana) o troppo veloce (più di 1 kg).</p>
@@ -489,7 +509,7 @@ function viewImpostazioni() {
     ${planIds.map(id => { const x = E.exSettings(state, id); return `<div class="exset"><span>${esc(EX[id].name)}</span>
       <select data-in="ex-inc" data-id="${id}">${[1, 1.25, 2, 2.5, 5].map(v => `<option value="${v}" ${v === x.inc ? 'selected' : ''}>+${kg(v)}</option>`).join('')}</select>
       <button class="${x.plates ? 'primary' : ''}" style="min-height:36px;padding:4px 10px;font-size:13px" data-act="ex-plates" data-id="${id}">dischi</button>
-      ${x.plates ? `<span class="small muted" style="grid-column:1/2">peso a vuoto</span><input type="number" inputmode="decimal" value="${x.base}" data-in="ex-base" data-id="${id}">` : ''}</div>`; }).join('')}
+      ${x.plates ? `<span class="small muted" style="grid-column:1/2">peso a vuoto</span><input type="text" inputmode="decimal" value="${kg(x.base)}" data-in="ex-base" data-id="${id}">` : ''}</div>`; }).join('')}
   </section>
   <h2>Backup</h2><section class="card stack">
     <p class="small muted">I dati sono solo su questo telefono. Esporta un backup ogni tanto (per esempio su iCloud Drive).</p>
@@ -523,10 +543,11 @@ document.addEventListener('click', ev => {
   const el = ev.target.closest('[data-act]'); if (!el) return;
   const a = el.dataset.act; const c = state.current;
   const i = +el.dataset.i; const d = +el.dataset.d;
-  const rerender = () => { if (c && !c.start) c.minutes = E.itemMinutes(c.items); save(); render(); };
+  const rerender = () => { if (c && !c.start) { tidySupersets(c); c.minutes = E.itemMinutes(c.items); } save(); render(); };
   switch (a) {
     case 'intro-ok': state.seenIntro = true; return rerender();
     case 'cycle-ok': state.cycleBanner = null; return rerender();
+    case 'notice-ok': state.notice = null; return rerender();
     case 'force': state.current = E.compose(state, today()); state.current.forced = true; return rerender();
     case 'recompose': { const f = c?.forced; state.current = E.compose(state, today()); state.current.forced = f; toast('Seduta ricomposta'); return rerender(); }
     case 'ov-sets': c.items[i].planSets = Math.max(1, Math.min(8, c.items[i].planSets + d)); return rerender();
@@ -534,18 +555,17 @@ document.addEventListener('click', ev => {
     case 'ov-move': {
       const j = i + d; if (j < 0 || j >= c.items.length) return;
       [c.items[i], c.items[j]] = [c.items[j], c.items[i]];
-      c.items.forEach(x => { if (x.ss && c.items.filter(y => y.ss === x.ss).length < 2) x.ss = null; });
-      // una superserie deve restare contigua
-      const groupsOk = c.items.every((x, k) => !x.ss || (c.items[k - 1]?.ss === x.ss) || (c.items[k + 1]?.ss === x.ss));
-      if (!groupsOk) c.items.forEach(x => { if (x.ss && !(c.items[c.items.indexOf(x) - 1]?.ss === x.ss || c.items[c.items.indexOf(x) + 1]?.ss === x.ss)) x.ss = null; });
       return rerender();
     }
     case 'ov-swap': case 'swap': {
-      const it = c.items[i]; const e = EX[it.id];
-      const used = new Set(c.items.map(x => x.id));
-      const plan = state.settings.plan[e.muscle];
-      const pool = [e.sub, plan.anchor, ...plan.comp, ...EXERCISES.filter(x => x.muscle === e.muscle).map(x => x.id)].filter(x => EX[x] && !used.has(x));
-      const nid = pool[0]; if (!nid) { toast('Nessuna alternativa disponibile'); return; }
+      const it = c.items[i];
+      const orig = EX[it.orig || it.id]; it.orig = orig.id;
+      const plan = state.settings.plan[orig.muscle];
+      const ring = [...new Set([orig.id, orig.sub, plan.anchor, ...plan.comp, ...EXERCISES.filter(x => x.muscle === orig.muscle).map(x => x.id)])].filter(x => EX[x]);
+      const used = new Set(c.items.filter(x => x !== it).map(x => x.id));
+      const at = ring.indexOf(it.id);
+      const nid = [...ring.slice(at + 1), ...ring.slice(0, at)].find(x => !used.has(x));
+      if (!nid) { toast('Nessuna alternativa disponibile'); return; }
       const sg = E.suggestion(state, nid);
       Object.assign(it, { id: nid, kg: sg.kg, reps: sg.reps, note: sg.note, sets: [] }); delete it.adjKg;
       ui.draft = null; toast(`Cambiato con ${EX[nid].name}`); return rerender();
@@ -617,6 +637,13 @@ document.addEventListener('input', ev => {
 });
 
 // ---------- Avvio ----------
+if (state.current?.start && state.current.date < today()) {
+  const c = state.current;
+  const res = E.finishSession(state, c);       // la fine diventa l'ultima serie registrata
+  state.current = null; state.rest = null;
+  if (res) state.notice = `La seduta di ${E.DAY_NAMES[E.weekday(c.date)]} è stata chiusa e salvata da sola.`;
+  save();
+}
 if (state.current?.start) { keepAwake(true); }
 // Una seduta pianificata ma non iniziata di un giorno passato si ricompone
 if (state.current && !state.current.start && state.current.date !== today()) state.current = null;

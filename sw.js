@@ -1,5 +1,5 @@
 // Service worker: tutto in cache per funzionare offline in palestra.
-const VERSION = 'v1.0.1';
+const VERSION = 'v1.0.2';
 const ASSETS = [
 "./",
 "index.html",
@@ -105,7 +105,7 @@ const ASSETS = [
 "img/ex/Wide-Grip_Lat_Pulldown_1.jpg"
 ];
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION).then(c => c.addAll(ASSETS.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim()));
