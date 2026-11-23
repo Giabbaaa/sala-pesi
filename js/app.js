@@ -1,5 +1,6 @@
 import { EX, EXERCISES, MUSCLES, MUSCLE_ORDER, TYPE_RULES, EQUIP_GROUPS, imgs } from './catalog.js';
 import * as E from './engine.js';
+import * as G from './sync.js';
 
 // La chiave resta questa per sempre: la versione del formato è dentro i dati (state.v, vedi engine.SCHEMA)
 const KEY = 'salapesi.v1';
@@ -129,7 +130,7 @@ async function keepAwake(on) {
     if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
   } catch { wakeLock = null; }
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden && state.current?.view === 'ex') keepAwake(true); tickTimer(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && state.current?.view === 'ex') keepAwake(true); tickTimer(); ghBackup({ every: document.hidden ? 3 : 10 }); });
 
 // ---------- Timer di recupero ----------
 function startRest(sec, label) {
@@ -291,6 +292,7 @@ function sync() {
   if (!hasLogs(c) && !state.sessions.some(s => s.date === c.date)) return;
   const r = E.recordDay(state, c);
   if (r?.newCycle) state.cycleBanner = `Inizia il ciclo ${state.cycle.n}`;
+  setTimeout(() => ghBackup(), 0);
 }
 
 function viewOggi() {
@@ -363,10 +365,93 @@ function futureDay(k) {
     <p class="small muted" style="margin-top:10px">È una previsione: l’app la ricalcola in base a quello che farai prima.</p></section>`;
 }
 
+// ---------- Copia su GitHub ----------
+// Automatica dopo le modifiche (al massimo ogni 10 minuti, ogni 3 quando si esce dall'app) e "Salva ora".
+// Per sicurezza non sovrascrive mai in automatico una copia con molti più allenamenti di quelli sul telefono.
+let ghBusy = false, ghTimer = null;
+const sessionsIn = t => { try { return (JSON.parse(t).sessions || []).length; } catch { return 0; } };
+function loadData(text, why) {
+  const data = JSON.parse(text);
+  if (!data || !Array.isArray(data.sessions) || !data.settings) throw new Error('formato');
+  snapshot(JSON.stringify(state), why);
+  state = E.migrate(data); state.meta = state.meta || {}; ui.day = null; save();
+}
+async function ghBackup({ force = false, every = 10 } = {}) {
+  const c = G.ghConf(); if (!c || ghBusy) return;
+  const raw = localStorage.getItem(KEY); if (!raw) return;
+  const h = G.hash(raw), n = sessionsIn(raw);
+  if (!force && h === c.hash) return;
+  if (!force && c.n && n < c.n / 2) { G.ghStore({ ...c, err: 'sul telefono ci sono molti meno allenamenti che su GitHub: non sovrascrivo da solo' }); return; }
+  const wait = every * 60000 - (Date.now() - (c.at || 0));
+  if (!force && wait > 0) { clearTimeout(ghTimer); ghTimer = setTimeout(() => ghBackup(), Math.min(wait, 10 * 60000) + 1000); return; }
+  ghBusy = true; clearTimeout(ghTimer);
+  const d = new Date(), msg = `Copia dall'app · ${d.getDate()}/${d.getMonth() + 1} ${E.pad(d.getHours())}:${E.pad(d.getMinutes())} · ${n} ${n === 1 ? "allenamento" : "allenamenti"}`;
+  try {
+    let sha;
+    try { sha = await G.ghWrite(c, raw, c.sha, msg); }
+    catch (e) {
+      if (![409, 422].includes(e.status)) throw e;
+      // la copia su GitHub è cambiata da un'altra parte: si rilegge prima di sostituirla
+      const remote = await G.ghRead(c);
+      if (!force && remote && sessionsIn(remote.text) > n) throw new Error('su GitHub ci sono più allenamenti che sul telefono: usa "Riprendi da GitHub" o "Salva ora"');
+      sha = await G.ghWrite(c, raw, remote?.sha, msg);
+    }
+    G.ghStore({ ...c, sha, hash: h, n, at: Date.now(), err: null });
+    if (force) toast('Copia salvata su GitHub');
+  } catch (e) {
+    G.ghStore({ ...c, err: e.message });
+    if (force) toast(`Copia non riuscita: ${e.message}`);
+  } finally { ghBusy = false; if (ui.tab === 'impostazioni') render(); }
+}
+async function ghConnect(token) {
+  const c = { ...G.DEFAULTS, token };
+  ui.ghMsg = 'Collegamento in corso…'; render();
+  try {
+    const remote = await G.ghRead(c);
+    if (remote && sessionsIn(remote.text) > state.sessions.length) {
+      // telefono nuovo o dati persi: si riprendono quelli su GitHub (quelli di prima restano tra le copie)
+      loadData(remote.text, 'prima di riprendere i dati da GitHub');
+      toast('Allenamenti ripresi da GitHub');
+    }
+    G.ghStore({ ...c, sha: remote?.sha || null });
+    ui.ghMsg = null;
+    await ghBackup({ force: true });
+    const now = G.ghConf();
+    if (now?.err) { G.ghStore(null); ui.ghMsg = `Non collegato: ${now.err}`; }
+  } catch (e) { G.ghStore(null); ui.ghMsg = `Non collegato: ${e.message}`; }
+  render();
+}
+async function ghRestore() {
+  const c = G.ghConf(); if (!c) return;
+  try {
+    const remote = await G.ghRead(c);
+    if (!remote) { toast('Su GitHub non c’è ancora una copia'); return; }
+    loadData(remote.text, 'prima di riprendere i dati da GitHub');
+    G.ghStore({ ...c, sha: remote.sha, hash: G.hash(localStorage.getItem(KEY)), n: state.sessions.length, err: null });
+    toast('Allenamenti ripresi da GitHub');
+  } catch (e) { toast(e.message === 'formato' ? 'La copia su GitHub non è leggibile' : `Non riuscito: ${e.message}`); }
+  render();
+}
+function ghHtml() {
+  const c = G.ghConf();
+  if (!c) return `<div class="ghbox"><b>Copia automatica su GitHub</b>
+    <p class="small muted">Dopo ogni allenamento l’app salva i dati nel repository sala-pesi (ramo “dati”). La chiave resta solo su questo telefono.</p>
+    <a class="link" href="${G.TOKEN_URL}" target="_blank" rel="noopener">1. Crea la chiave su GitHub ↗</a>
+    <div class="row"><input type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="2. Incolla qui la chiave" data-in="gh-token"><button data-act="gh-connect">Collega</button></div>
+    ${ui.ghMsg ? `<p class="small" style="color:var(--warn)">${esc(ui.ghMsg)}</p>` : ''}</div>`;
+  const at = c.at ? new Date(c.at) : null;
+  return `<div class="ghbox"><div class="row between"><b>Copia su GitHub</b><span class="small" style="color:var(${c.err ? '--warn' : '--ok'})">${c.err ? 'da controllare' : 'attiva'}</span></div>
+    <p class="small muted">Ultima copia: <b>${at ? `${dayLabel(E.dayKey(at))} ${E.pad(at.getHours())}:${E.pad(at.getMinutes())}` : 'mai'}</b>${c.n != null ? ` · ${c.n} ${c.n === 1 ? 'allenamento' : 'allenamenti'}` : ''}</p>
+    ${c.err ? `<p class="small" style="color:var(--warn)">${esc(c.err)}</p>` : ''}
+    <div class="row"><button class="grow" data-act="gh-now">Salva ora</button><button class="grow" data-act="gh-restore">${ui.confirmGh ? 'Conferma' : 'Riprendi da GitHub'}</button></div>
+    <button class="ghost" style="align-self:flex-start" data-act="gh-off">${ui.confirmGhOff ? 'Tocca di nuovo per scollegare' : 'Scollega'}</button></div>`;
+}
+
 // Promemoria discreto: una copia dei dati fuori dal telefono ogni mese circa
 function backupReminder() {
   const m = state.meta, t = today();
   if (state.sessions.filter(E.counts).length < 6) return '';
+  const gh = G.ghConf(); if (gh?.at && !gh.err && Date.now() - gh.at < 30 * 864e5) return '';
   if (m.exported && E.diffDays(t, m.exported) < 30) return '';
   if (m.remindAt && E.diffDays(t, m.remindAt) < 14) return '';
   return `<section class="alert small"><b>Salva una copia dei tuoi allenamenti</b>
@@ -834,6 +919,7 @@ function viewImpostazioni() {
       ${x.plates ? `<span class="small muted" style="grid-column:1/2">peso a vuoto</span><input type="text" inputmode="decimal" value="${kg(x.base)}" data-in="ex-base" data-id="${id}">` : ''}</div>`; }).join('')}
   </section>
   <h2>Dati e backup</h2><section class="card stack">
+    ${ghHtml()}
     <p class="small muted">I dati restano su questo telefono anche quando l’app si aggiorna. Se cancelli l’app o cambi iPhone servono una copia su file (per esempio su iCloud Drive). Ultima copia su file: <b>${state.meta.exported ? dayLabel(state.meta.exported) : 'mai'}</b>.</p>
     <div class="row"><button class="grow" data-act="export">Salva copia</button><label class="grow" style="display:block"><input type="file" accept="application/json,.json" data-in="import" hidden><span class="row filebtn">Carica copia</span></label></div>
     ${snapList().length ? `<p class="small muted" style="margin-top:12px">Copie automatiche su questo telefono</p>
@@ -841,7 +927,7 @@ function viewImpostazioni() {
         <button class="ghost" data-act="snap" data-k="${x.k}">${ui.confirmSnap === x.k ? 'Conferma' : 'Ripristina'}</button></div>`; }).join('')}` : ''}
     <button class="danger" style="margin-top:14px" data-act="reset">${ui.confirmReset ? 'Tocca di nuovo per cancellare tutto' : 'Cancella tutti i dati'}</button>
   </section>
-  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.5 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.6 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
 }
 
 // ---------- Render ----------
@@ -1016,6 +1102,10 @@ document.addEventListener('click', ev => {
     case 'dur': state.settings.sessionMinutes = +el.dataset.v; replan(); return rerender();
     case 'plate': { const v = +el.dataset.v; const p = state.settings.plates; state.settings.plates = p.includes(v) ? p.filter(x => x !== v) : [...p, v]; return rerender(); }
     case 'ex-plates': { const id = el.dataset.id; const x = state.settings.ex[id] || {}; state.settings.ex[id] = { ...x, plates: !E.exSettings(state, id).plates }; return rerender(); }
+    case 'gh-connect': { const t = ($('[data-in=gh-token]')?.value || '').trim(); if (!t) { ui.ghMsg = 'Incolla prima la chiave'; return render(); } ghConnect(t); return; }
+    case 'gh-now': ghBackup({ force: true }); toast('Salvataggio su GitHub…'); return;
+    case 'gh-restore': if (!ui.confirmGh) { ui.confirmGh = true; return render(); } ui.confirmGh = false; ghRestore(); return;
+    case 'gh-off': if (!ui.confirmGhOff) { ui.confirmGhOff = true; return render(); } ui.confirmGhOff = false; G.ghStore(null); toast('Copia su GitHub scollegata'); return render();
     case 'export': state.meta.exported = today(); save(); download(`sala-pesi-${today()}.json`, JSON.stringify(state), 'application/json'); return render();
     case 'del': ui.confirmDel = +el.dataset.id; return render();
     case 'del-no': ui.confirmDel = null; return render();
@@ -1038,7 +1128,7 @@ document.addEventListener('click', ev => {
 });
 
 document.addEventListener('change', ev => {
-  const el = ev.target; const k = el.dataset.in; if (!k) return;
+  const el = ev.target; const k = el.dataset.in; if (!k || k === 'gh-token') return;   // la chiave si legge solo con "Collega"
   const num = () => parseFloat(String(el.value).replace(',', '.'));
   const c = state.current;
   switch (k) {
@@ -1062,10 +1152,7 @@ document.addEventListener('change', ev => {
       const f = el.files[0]; if (!f) return;
       f.text().then(t => {
         try {
-          const data = JSON.parse(t);
-          if (!data || !Array.isArray(data.sessions) || !data.settings) throw new Error('formato');
-          snapshot(JSON.stringify(state), 'prima di caricare una copia');
-          state = E.migrate(data); state.meta = state.meta || {}; ui.day = null; save(); toast('Copia caricata'); render();
+          loadData(t, 'prima di caricare una copia'); toast('Copia caricata'); render();
         } catch { toast('File non valido'); }
       });
       return;
@@ -1129,6 +1216,7 @@ document.addEventListener('touchend', ev => {
 }
 if (state.current?.view === 'ex') keepAwake(true);
 render();
+setTimeout(() => ghBackup(), 2000);
 // Aggiorna la vista al cambio di giorno o al ritorno nell'app
 let lastDay = today();
 setInterval(() => {

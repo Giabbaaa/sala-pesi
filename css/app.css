@@ -68,7 +68,7 @@ button.ghost { background: transparent; color: var(--accent); padding: 8px 6px; 
 button.icon { width: 40px; height: 40px; min-height: 40px; padding: 0; display: inline-grid; place-items: center; font-size: 18px; }
 button.danger { color: var(--bad); }
 button:disabled { opacity: .35; }
-select, input[type=text], input[type=number], input[type=time] {
+select, input[type=text], input[type=password], input[type=number], input[type=time] {
   background: var(--card2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; min-height: 44px; width: 100%;
 }
 input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 0; }
@@ -314,3 +314,7 @@ button.back { padding: 4px 2px; font-weight: 600; }
 .mrow .small.muted { align-self: end; font-variant-numeric: tabular-nums; }
 .durrow { margin: 4px 0 2px; gap: 8px; }
 .durrow .seg button { padding: 4px 9px; }
+/* Copia su GitHub */
+.ghbox { display: flex; flex-direction: column; gap: 8px; padding-bottom: 14px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.ghbox a.link { color: var(--accent); font-weight: 600; text-decoration: none; padding: 4px 0; align-self: flex-start; }
+.ghbox input { flex: 1; min-width: 0; }
