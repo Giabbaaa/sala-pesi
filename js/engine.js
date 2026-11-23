@@ -25,7 +25,7 @@ export const round10 = x => Math.round(x / 10) * 10;
 // - ogni cambio di formato alza SCHEMA e aggiunge un passo in MIGRATIONS, che trasforma senza cancellare;
 // - gli id degli esercizi non si cancellano né si rinominano: un esercizio tolto diventa hidden: true;
 // - prima di ogni migrazione l'app salva una copia dei dati com'erano (vedi app.js, snapshot).
-export const SCHEMA = 2;
+export const SCHEMA = 3;
 
 export function initialState() {
   return {
@@ -37,7 +37,7 @@ export function initialState() {
       plan: JSON.parse(JSON.stringify(DEFAULT_PLAN)),
       ex: {},                        // per esercizio: { inc, plates, base, note }
       plates: [20, 10, 5, 2.5, 1.25],
-      sessionMinutes: 65,
+      sessionMinutes: 60,            // durata abituale della seduta (si può cambiare ogni giorno)
     },
     sessions: [],
     current: null,
@@ -51,6 +51,14 @@ export function initialState() {
 const MIGRATIONS = {
   1: s => {   // 1 → 2: da "giorni in cui non puoi" a "giorni in cui pensi di andare"
     if (s.settings) { s.settings.days = s.settings.days || []; delete s.settings.unavailable; }
+    return s;
+  },
+  2: s => {   // 2 → 3: durata abituale tra quelle del selettore (30–90); tirate al mento tolte se erano quelle predefinite
+    if (s.settings) {
+      if (s.settings.sessionMinutes) s.settings.sessionMinutes = nearestDuration(s.settings.sessionMinutes);
+      const lat = s.settings.plan?.laterali;
+      if (lat && lat.Upright_Cable_Row === 1) delete lat.Upright_Cable_Row;
+    }
     return s;
   },
 };
@@ -156,8 +164,9 @@ export function nextSetupPair(state, a, b, used = new Set()) {
 // Forma le superserie solo tra esercizi alla stessa postazione. Se non ce ne sono, cambia
 // l'esercizio meno importante con uno della postazione dell'altro (un'alta solo con un'altra alta).
 const PAIRS = [['bicipiti', 'tricipiti'], ['bicipiti', 'tricipiti'], ['laterali', 'posteriori'], ['petto', 'posteriori']];
-function pairUp(state, items, today) {
-  const free = m => items.filter(it => it.id !== 'cardio' && EX[it.id]?.muscle === m && SS_TYPES.includes(EX[it.id].type) && !it.ss);
+// dry: solo per stimare i minuti (non crea esercizi nuovi)
+function pairUp(state, items, today, dry = false) {
+  const free = m => items.filter(it => it.id !== 'cardio' && !it.skipped && EX[it.id]?.muscle === m && SS_TYPES.includes(EX[it.id].type) && !it.ss);
   let n = 0;
   for (const [m1, m2] of PAIRS) {
     const A = free(m1), B = free(m2);
@@ -171,10 +180,13 @@ function pairUp(state, items, today) {
         for (const keep of [...keepL].sort((x, y) => prio(y) - prio(x))) {
           for (const sw of [...swapL].sort((x, y) => prio(x) - prio(y))) {
             // un esercizio a priorità alta si cambia solo con un altro a priorità alta
+            // un complementare si cambia con un altro complementare se c'è (la rotazione non torna all'àncora)
+            const anc = id => prio(sw) < 3 && exPrio(state, id) === 3 ? 1 : 0;
             const alt = poolOf(state, EX[sw.id].muscle).filter(id => !used.has(id) && SS_TYPES.includes(EX[id].type) && setupOf(id) === setupOf(keep.id)
-              && (prio(sw) < 3 || exPrio(state, id) >= 3)).sort(byPrio(state))[0];
+              && (prio(sw) < 3 || exPrio(state, id) >= 3))
+              .sort((x, y) => anc(x) - anc(y) || exPrio(state, y) - exPrio(state, x) || lastUse(state, x) - lastUse(state, y))[0];
             if (!alt) continue;
-            const nu = makeItem(state, alt, sw.planSets, today);
+            const nu = dry ? { ...sw, id: alt } : makeItem(state, alt, sw.planSets, today);
             items[items.indexOf(sw)] = nu;
             pair = [keep, nu]; break outer;
           }
@@ -418,15 +430,31 @@ export function kcalRange(state, minutes, { superset = false, hard = false } = {
   return [round10(w * h * 3.5), round10(w * h * hi)];
 }
 
-export function itemMinutes(items) {
+// warm: minuti di cardio leggero iniziale (8, meno nelle sedute corte)
+export function itemMinutes(items, warm = 8) {
   let sets = 0;
   const groups = groupItems(items);
   for (const g of groups) {
-    if (g.cardio) { sets += g.items[0].minutes / 2.5; continue; }
+    if (g.cardio) { sets += (g.items[0].minutes || 0) / 2.5; continue; }
     if (g.items.length > 1) sets += Math.max(...g.items.map(i => i.planSets)) * 1.5;
     else sets += g.items[0].planSets;
   }
-  return Math.round(8 + sets * 2.5); // 8 min di cardio leggero iniziale
+  return Math.round(warm + sets * 2.5);
+}
+
+// ---------- Durata della seduta ----------
+// Si sceglie ogni giorno (30–90 min, predefinita quella abituale delle impostazioni). Quello che non ci sta
+// resta in arretrato e passa alle sedute successive grazie alla finestra mobile.
+export const DURATIONS = [30, 45, 60, 75, 90];
+export const nearestDuration = m => DURATIONS.reduce((a, b) => Math.abs(b - m) < Math.abs(a - m) ? b : a);
+export const warmMin = d => d <= 30 ? 3 : d <= 45 ? 5 : 8;
+export const usualMinutes = state => state.settings.sessionMinutes || 60;
+export const planMinutes = (state, c) => itemMinutes(c.items, warmMin(c.duration || usualMinutes(state)));
+// Durata media delle ultime 6 sedute (quella scelta; le sedute di prima valgono la durata abituale)
+export function avgDuration(state, before = '9999-12-31') {
+  const usual = usualMinutes(state);
+  const last = state.sessions.filter(s => counts(s) && !s.free && !s.deload && s.date < before).slice(-6);
+  return last.length ? last.reduce((a, s) => a + (s.duration || usual), 0) / last.length : usual;
 }
 
 // Raggruppa gli esercizi in superserie consecutive
@@ -472,32 +500,152 @@ export function seedSession(state, today) {
   return { items, seed: which, reason: `Seduta tipo ${which}: le prime sedute servono a fissare i carichi di partenza` };
 }
 
-export function compose(state, today = dayKey(), now = Date.now()) {
+export function compose(state, today = dayKey(), now = Date.now(), duration = null) {
   const cyc = cycleInfo(state);
   const deload = state.cycle.deloadLeft > 0;
   const nonDeload = state.sessions.filter(s => !s.deload && counts(s)).length;
+  const dur = duration || usualMinutes(state);
+  const warm = warmMin(dur);
   let res;
-  if (nonDeload < 4) res = seedSession(state, today);
-  else res = dynamicSession(state, today, now);
+  if (nonDeload < 4) {
+    res = seedSession(state, today);
+    res.want = pairedMinutes(state, res.items, warm, false);
+    res.cut = fitTime(state, res.items, windowCtx(state, today), dur + 2, warm, false);
+  } else res = dynamicSession(state, today, now, dur);
   if (deload) {
     res.items.forEach(it => { if (it.id !== 'cardio') it.planSets = Math.max(1, Math.round(it.planSets / 2)); });
     res.reason = `Scarico (${4 - state.cycle.deloadLeft} di 3): metà serie, stessi carichi, sforzo facile o giusto`;
   }
-  const minutes = itemMinutes(res.items);
-  return { date: today, items: res.items, reason: res.reason, seed: res.seed || null, deload, cycle: cyc.n, minutes, cur: 0, view: 'list' };
+  const minutes = itemMinutes(res.items, warm);
+  return { date: today, items: res.items, reason: res.reason, seed: res.seed || null, deload, cycle: cyc.n, minutes, duration: dur, want: res.want || null, cur: 0, view: 'list' };
 }
 
-function dynamicSession(state, today, now) {
-  const { settings } = state;
+// ---------- Tagli per stare nel tempo ----------
+// Pavimento dei muscoli a priorità minima: 2 serie negli ultimi 7 giorni, contando le indirette
+// (la leg press vale mezza serie per glutei e femorali).
+export const FLOOR = 2;
+const hasCompoundAnchor = (state, m) => anchorsOf(state, m).some(id => EX[id].type === 'multi');
+
+// Quando c'è posto per un solo esercizio di un muscolo: àncora una volta, la volta dopo il complementare
+// usato meno di recente (così non spariscono petto alto, brachiale, capo lungo del tricipite)
+function anchorTurn(state, m) {
+  const a = anchorsOf(state, m);
+  return !a.length || !a.some(id => sinceUse(state, id, m) === 0);
+}
+function keeper(state, m, exs) {
+  const A = exs.filter(x => exPrio(state, x.id) === 3), C = exs.filter(x => exPrio(state, x.id) < 3);
+  if (!A.length || !C.length) return [...exs].sort((a, b) => exPrio(state, b.id) - exPrio(state, a.id))[0];
+  const lru = (a, b) => lastUse(state, a.id) - lastUse(state, b.id);
+  return anchorTurn(state, m) ? [...A].sort(lru)[0] : [...C].sort(lru)[0];
+}
+
+// Finestra per muscolo: serie fatte nei giorni prima (oggi escluso: oggi conta il piano), serie attese
+// nelle prossime sedute (con la durata media delle ultime 6), obiettivi del livello e del ciclo 1
+function windowCtx(state, today) {
   const freq = freqOf(state);
-  const done = setsByMuscle(state, addDays(today, -3), today);
+  const done = setsByMuscle(state, addDays(today, -3), addDays(today, -1));
+  const win7 = setsByMuscle(state, addDays(today, -6), addDays(today, -1));
   const future = recommendedDays(state, today).filter(k => k > today && diffDays(k, today) <= 3).length;
-  const need = {}, target = {}, light = [];
+  const f = Math.min(1, avgDuration(state, today) / usualMinutes(state));
+  const target = {}, base = {}, ahead = {};
   for (const m of MUSCLE_ORDER) {
     target[m] = targetFor(state, m);
+    base[m] = TARGETS[state.settings.priority[m] || 'normale'][0];
+    ahead[m] = target[m] / freq * future * f;
+  }
+  return { freq, done, win7, future, target, base, ahead };
+}
+
+// Minuti di quello che resta da fare (serie non ancora segnate), contando le superserie che si formeranno
+const restSets = it => it.id === 'cardio' || it.skipped ? 0 : Math.max(0, it.planSets - (it.sets?.length || 0));
+function pairedMinutes(state, items, warm, pair = true) {
+  const t = items.map(i => ({ ...i }));
+  if (pair) pairUp(state, t, null, true);
+  return itemMinutes(t.map(i => i.id === 'cardio' ? { ...i, minutes: i.sets?.length ? 0 : i.minutes } : { ...i, planSets: restSets(i) }), warm);
+}
+
+// Ordine dei tagli: prima le priorità minime fino al pavimento, poi le normali fino all'obiettivo del ciclo 1,
+// poi le alte (una serie a testa, a turno) fino all'obiettivo del ciclo 1. Se ancora non basta (sedute corte):
+// le normali a 2 serie, le alte a 3, via le gambe, via le normali senza multiarticolare (addome, deltoide
+// posteriore), le alte a 2, via il resto. La schiena resta anche nelle sedute da 30 minuti.
+const STAGES = [['minima', 'floor'], ['normale', 'base'], ['alta', 'base'], ['normale', 2], ['alta', 3], ['minima', 0], ['normale', 0, 'iso'], ['alta', 2], ['normale', 0], ['alta', 0]];
+function fitTime(state, items, ctx, budget, warm, pair = true) {
+  const fits = () => pairedMinutes(state, items, warm, pair) <= budget;
+  if (fits()) return 0;
+  const P = state.settings.priority;
+  const tot = it => it.id === 'cardio' ? 0 : it.skipped ? (it.sets?.length || 0) : Math.max(it.planSets, it.sets?.length || 0);
+  const planned = () => {
+    const acc = Object.fromEntries(MUSCLE_ORDER.map(m => [m, 0]));
+    for (const it of items) if (it.id !== 'cardio' && EX[it.id]) for (const [m, w] of Object.entries(EX[it.id].work)) acc[m] += w * tot(it);
+    return acc;
+  };
+  // Una serie in meno per il muscolo: si accorcia l'esercizio più lungo; a 2 serie si toglie un esercizio
+  // (resta quello che tocca secondo la rotazione àncora / complementare)
+  const step = m => {
+    const exs = items.filter(it => it.id !== 'cardio' && EX[it.id]?.muscle === m && restSets(it) > 0);
+    if (!exs.length) return null;
+    const big = [...exs].sort((a, b) => b.planSets - a.planSets)[0];
+    if (big.planSets > 2) return { it: big, n: 1, apply: () => { big.planSets--; } };
+    // un esercizio già iniziato resta (si toglie per ultimo)
+    const started = exs.filter(x => x.sets?.length);
+    const keep = exs.length > 1 ? (started[0] || keeper(state, m, exs)) : null;
+    const others = exs.filter(x => x !== keep), fresh = others.filter(x => !x.sets?.length);
+    const drop = (fresh.length ? fresh : others).sort((a, b) => exPrio(state, a.id) - exPrio(state, b.id))[0];
+    return { it: drop, n: restSets(drop), apply: () => { if (drop.sets?.length) drop.planSets = drop.sets.length; else items.splice(items.indexOf(drop), 1); } };
+  };
+  const ok = (m, s, kind) => {
+    const pl = planned(), work = EX[s.it.id].work;
+    if (kind === 'floor') return Object.entries(work).every(([mm, w]) => P[mm] !== 'minima' || ctx.win7[mm] + pl[mm] - w * s.n >= FLOOR - 1e-9);
+    if (kind === 'base') return ctx.done[m] + ctx.ahead[m] + pl[m] - (work[m] || 0) * s.n >= ctx.base[m] - 1e-9;
+    const direct = items.filter(it => it.id !== 'cardio' && EX[it.id]?.muscle === m).reduce((a, it) => a + tot(it), 0);
+    return direct - s.n >= kind;
+  };
+  let cut = 0;
+  for (const [prio, kind, only] of STAGES) {
+    for (let moved = true; moved;) {
+      moved = false;
+      const pl = planned();
+      // a turno, partendo dal muscolo meno in arretrato
+      const cov = m => kind === 'floor' ? ctx.win7[m] + pl[m] : (ctx.done[m] + ctx.ahead[m] + pl[m]) / ctx.target[m];
+      for (const m of MUSCLE_ORDER.filter(x => P[x] === prio && (!only || !hasCompoundAnchor(state, x))).sort((a, b) => cov(b) - cov(a))) {
+        const s = step(m);
+        if (!s || !ok(m, s, kind)) continue;
+        s.apply(); cut += s.n; moved = true;
+        if (fits()) return cut;
+      }
+    }
+  }
+  return cut;
+}
+
+// "Ho fretta": quello che resta si taglia per stare nei minuti indicati, con le stesse regole
+export function trimPlan(state, cur, left, now = Date.now()) {
+  const logged = cur.items.some(it => it.sets?.length);
+  const warm = logged ? 0 : warmMin(left);
+  cur.items = cur.items.filter(it => it.id !== 'cardio' || it.sets?.length);   // il cardio extra si toglie per primo
+  const cut = fitTime(state, cur.items, windowCtx(state, cur.date), left + 1, warm, !logged);
+  if (!logged) pairUp(state, cur.items, cur.date);
+  for (const it of cur.items) if (it.ss && cur.items.filter(x => x.ss === it.ss).length < 2) it.ss = null;
+  const rest = pairedMinutes(state, cur.items, warm, false);
+  if (left - rest >= 10) cur.items.push({ id: 'cardio', minutes: Math.min(30, Math.floor((left - rest) / 5) * 5), planSets: 0, sets: [], skipped: false, ss: null });
+  const ts = cur.items.flatMap(it => (it.sets || []).map(x => x.t)).filter(Boolean);
+  const spent = ts.length ? (now - Math.min(...ts)) / 60000 + 8 : 0;
+  cur.duration = Math.max(15, Math.round(spent + left));
+  cur.minutes = Math.round(spent) + itemMinutes(cur.items.map(i => i.id === 'cardio' ? { ...i, minutes: i.sets?.length ? 0 : i.minutes } : { ...i, planSets: restSets(i) }), warm);
+  return cut;
+}
+
+function dynamicSession(state, today, now, dur) {
+  const { settings } = state;
+  const ctx = windowCtx(state, today);
+  const { freq, done, win7, target } = ctx;
+  const need = {}, light = [];
+  for (const m of MUSCLE_ORDER) {
     const quota = target[m] / freq;
-    let n = target[m] - done[m] - quota * future;
-    n = Math.min(n, target[m] * 0.6, 10);
+    let n;
+    // Gambe a priorità minima senza multiarticolare (abductor, calf, leg curl): solo sotto il pavimento
+    if (settings.priority[m] === 'minima' && !hasCompoundAnchor(state, m)) n = FLOOR - win7[m];
+    else n = Math.min(target[m] - done[m] - ctx.ahead[m], target[m] * 0.6, 10);
     // Recupero: allenato ieri (o oggi) → al massimo un terzo della quota; tra 24 e 36 ore → metà
     const h = hoursSince(state, m, now);
     const d = daysSince(state, m, today);
@@ -508,9 +656,8 @@ function dynamicSession(state, today, now) {
   const start = { ...need };
 
   // Ordine di lavoro: prima i muscoli con multiarticolari (danno serie indirette), poi priorità e arretrato
-  const hasCompoundAnchor = m => anchorsOf(state, m).some(id => EX[id].type === 'multi');
   const order = [...MUSCLE_ORDER].sort((a, b) =>
-    (hasCompoundAnchor(b) - hasCompoundAnchor(a)) ||
+    (hasCompoundAnchor(state, b) - hasCompoundAnchor(state, a)) ||
     (PRIO_RANK[settings.priority[a]] - PRIO_RANK[settings.priority[b]]) ||
     (need[b] - need[a]));
 
@@ -524,10 +671,12 @@ function dynamicSession(state, today, now) {
     const lru = (a, b) => lastUse(state, a) - lastUse(state, b);
     const by = lv => poolOf(state, m).filter(id => exPrio(state, id) === lv && !used.has(id)).sort(lru);
     const low = by(1); const due = low.filter(id => sinceUse(state, id, m) >= 6).slice(0, 1);
-    const cands = [...by(3), ...due, ...by(2), ...low.filter(id => !due.includes(id))];
-    if (!cands.length) continue;
+    const anchors = by(3), comps = [...due, ...by(2), ...low.filter(id => !due.includes(id))];
     // 1 esercizio fino a 4 serie, 2 fino a 8, poi 3 (se ce ne sono abbastanza); max 5 serie per esercizio
     const want = total <= 4 ? 1 : total <= 8 ? 2 : 3;
+    // con un solo esercizio si alterna: àncora una volta, la volta dopo il complementare usato meno di recente
+    const cands = want === 1 && comps.length && !anchorTurn(state, m) ? [...comps, ...anchors] : [...anchors, ...comps];
+    if (!cands.length) continue;
     const k = Math.max(1, Math.min(want, cands.length));
     total = Math.min(total, k * 5);
     const chunks = Array.from({ length: k }, (_, i) => Math.floor(total / k) + (i < total % k ? 1 : 0));
@@ -539,31 +688,10 @@ function dynamicSession(state, today, now) {
     });
   }
 
-  // Tempo: si taglia prima la priorità normale, poi l'alta; ogni muscolo tiene almeno
-  // le serie della priorità minima (2 a seduta); i muscoli a priorità minima non si toccano
-  const limit = settings.sessionMinutes + 3;
-  const prioOf = it => settings.priority[EX[it.id].muscle];
-  const muscleSets = m => items.filter(it => EX[it.id].muscle === m).reduce((a, it) => a + it.planSets, 0);
-  // Taglio di una serie: dal muscolo con più serie; prima si accorcia l'esercizio più lungo,
-  // poi si toglie un complementare (l'àncora resta sempre)
-  const cutOne = level => {
-    const muscles = [...new Set(items.filter(it => prioOf(it) === level).map(it => EX[it.id].muscle))]
-      .filter(m => muscleSets(m) > 2).sort((a, b) => muscleSets(b) - muscleSets(a));
-    for (const m of muscles) {
-      const exs = items.filter(it => EX[it.id].muscle === m);
-      const big = [...exs].sort((a, b) => b.planSets - a.planSets)[0];
-      if (big.planSets > 2) { big.planSets--; return true; }
-      if (exs.length > 1) {
-        const drop = [...exs].sort((a, b) => exPrio(state, a.id) - exPrio(state, b.id))[0];
-        items.splice(items.indexOf(drop), 1); return true;
-      }
-    }
-    return false;
-  };
-  for (const level of ['normale', 'alta']) {
-    let guard = 0;
-    while (itemMinutes(items) > limit && guard++ < 80 && cutOne(level));
-  }
+  // Tempo: si taglia nell'ordine delle priorità finché la seduta sta nei minuti di oggi
+  const warm = warmMin(dur);
+  const wantMin = pairedMinutes(state, items, warm);
+  const cut = fitTime(state, items, ctx, dur + 2, warm);
 
   // Superserie alla stessa postazione: bicipiti + tricipiti, laterali + posteriori, petto + posteriori
   pairUp(state, items, today);
@@ -585,15 +713,12 @@ function dynamicSession(state, today, now) {
     if (it.ss) items.filter(x => x !== it && x.ss === it.ss).forEach(x => sorted.push(x));
   }
 
-  // Cardio extra se il volume è coperto e avanza tempo
-  const mins = itemMinutes(sorted);
-  if (mins < settings.sessionMinutes - 15) {
-    const extra = Math.min(25, Math.max(15, settings.sessionMinutes - mins));
-    sorted.push({ id: 'cardio', minutes: extra, planSets: 0, sets: [], skipped: false, ss: null });
-  }
+  // Il tempo che avanza va al cardio (fino a 30 minuti)
+  const left = dur - itemMinutes(sorted, warm);
+  if (left >= 10) sorted.push({ id: 'cardio', minutes: Math.min(30, Math.floor(left / 5) * 5), planSets: 0, sets: [], skipped: false, ss: null });
 
   // Una riga che spiega il perché
-  const behind = MUSCLE_ORDER.filter(m => settings.priority[m] !== 'minima' && start[m] >= 2 && poolOf(state, m).length)
+  const behind = MUSCLE_ORDER.filter(m => settings.priority[m] !== 'minima' && start[m] >= 2 && sorted.some(it => EX[it.id]?.muscle === m))
     .sort((a, b) => start[b] / target[b] - start[a] / target[a]);
   const names = [];
   for (const m of behind) {
@@ -605,9 +730,10 @@ function dynamicSession(state, today, now) {
   if (names.length) parts.push(cap(names.join(' e ')) + ' in arretrato');
   const lightBig = light.filter(m => ['petto', 'schiena', 'quadricipiti'].includes(m)).map(m => m === 'quadricipiti' ? 'gambe' : MUSCLES[m].name.toLowerCase());
   if (lightBig.length) parts.push(`${lightBig.join(' e ')} allenat${lightBig.length > 1 || lightBig[0] === 'gambe' ? 'e' : 'o'} ieri, versione leggera`);
+  if (cut >= 3 && dur < usualMinutes(state)) parts.push(`${dur} minuti: il resto passa alle prossime sedute`);
   if (!sorted.filter(i => i.id !== 'cardio').length) parts.push('Volume già coperto: oggi cardio e recupero');
-  else if (sorted.some(i => i.id === 'cardio')) parts.push('cardio extra in coda');
-  return { items: sorted, reason: parts.join(' · ') || 'Seduta bilanciata su tutti i muscoli' };
+  else if (sorted.some(i => i.id === 'cardio')) parts.push('cardio in coda');
+  return { items: sorted, want: wantMin, cut, reason: parts.join(' · ') || 'Seduta bilanciata su tutti i muscoli' };
 }
 
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
@@ -623,6 +749,8 @@ export function finishSession(state, cur, now = Date.now()) {
   // se Termina arriva molto dopo l'ultima serie (app dimenticata aperta), la fine è l'ultima serie
   const end = now - lastT > 30 * 60000 ? lastT + (cardioMin + 2) * 60000 : now;
   const session = { id: now, date: cur.date, start, end, items, deload: cur.deload, seed: cur.seed, cycle: state.cycle.n };
+  if (cur.duration) session.duration = cur.duration;
+  if (cur.want) session.want = cur.want;
   // record: miglior massimale stimato rispetto allo storico precedente
   const records = [];
   for (const it of items) {
@@ -649,7 +777,7 @@ function advanceCycle(state, deload, date) {
     c.deloadLeft = 3;
     // si decide ora se il ciclo è andato bene (durante lo scarico gli stalli si azzerano)
     const sets = state.sessions.filter(s => s.cycle === c.n && !s.deload).flatMap(s => s.items.filter(i => i.id !== 'cardio').flatMap(i => i.sets));
-    c.levelUp = !!sets.length && sets.filter(x => x.eff === 'giusto').length / sets.length >= 0.5 && stalls < 3;
+    c.levelUp = !!sets.length && sets.filter(x => x.eff === 'giusto').length / sets.length >= 0.5 && stalls < 3 && levelFits(state, c.n, c.level + 1);
   };
   const stallCount = () => Object.keys(EX).filter(id => stalled(state, id)).length;
   if (deload) {
@@ -661,6 +789,19 @@ function advanceCycle(state, deload, date) {
     const stalls = stallCount();
     if (info.done >= c.length || (stalls >= 3 && info.done >= 6)) startDeload(stalls);
   }
+}
+
+// Il livello successivo si sblocca solo se sta nel tempo: i minuti che le sedute del ciclo chiedevano
+// (prima dei tagli), portati al volume del livello successivo, contro la durata scelta in media
+function levelFits(state, n, level) {
+  const P = state.settings.priority;
+  const vol = L => MUSCLE_ORDER.reduce((a, m) => a + (P[m] === 'minima' ? 0 : TARGETS[P[m] || 'normale'][L] || 0), 0);
+  if (level > 2 || !vol(level - 1)) return true;
+  const ss = state.sessions.filter(s => s.cycle === n && !s.deload && counts(s) && !s.free && s.want && s.duration);
+  if (ss.length < 3) return true;
+  const avg = k => ss.reduce((a, s) => a + s[k], 0) / ss.length;
+  const warm = warmMin(avg('duration'));
+  return warm + (avg('want') - warm) * vol(level) / vol(level - 1) <= avg('duration') + 3;
 }
 
 // Ricalcola cicli e scarichi rigiocando le sedute nell'ordine. L'ultima seduta conserva lo stato
@@ -716,6 +857,9 @@ export function recordDay(state, cur, now = Date.now()) {
     const minutes = Math.max(1, Math.round((end - start) / 60000));
     const hard = all.filter(x => x.eff !== 'facile').length / all.length > 0.5;
     const planned = work.filter(i => !i.skipped || i.sets.length);
+    // durata scelta per la seduta e minuti che il piano chiedeva prima dei tagli (servono a capire se il livello sta nel tempo)
+    if (cur.duration) s.duration = cur.duration;
+    if (cur.want) s.want = cur.want;
     Object.assign(s, { items, start, end, minutes, deload: !!cur.deload, seed: cur.seed || null, mini: nWork < MINI_SETS, free: !!cur.free,
       frac: planned.length ? planned.filter(isItemDone).length / planned.length : 1,
       kcal: kcalRange(state, minutes, { superset: items.some(i => i.ss), hard }) });
@@ -793,7 +937,7 @@ export function forecast(state, day, todayPlan = null, today = dayKey()) {
     if (k === day) return plan;
     const items = plan.items.map(it => ({ id: it.id, ss: it.ss, planSets: it.planSets, minutes: it.minutes,
       sets: it.id === 'cardio' ? [{ kg: 0, reps: it.minutes, eff: 'giusto' }] : Array.from({ length: it.planSets }, () => ({ kg: it.kg || 0, reps: it.reps, eff: 'giusto' })) }));
-    sim.sessions.push({ id: -at(k), date: k, start: at(k), end: at(k) + plan.minutes * 60000, items, seed: plan.seed, deload: plan.deload, frac: 1 });
+    sim.sessions.push({ id: -at(k), date: k, start: at(k), end: at(k) + plan.minutes * 60000, items, seed: plan.seed, deload: plan.deload, frac: 1, duration: plan.duration });
   }
   return null;
 }

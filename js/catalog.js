@@ -198,7 +198,7 @@ export const EXERCISES = [
     'Davanti alla puleggia bassa con la barra, presa alla larghezza delle spalle.',
     'Tira la barra verso il petto portando i gomiti in alto e di lato, fino all’altezza delle spalle.',
     'Scendi lento fino a braccia distese.',
-    'Non salire oltre le spalle e non stringere troppo la presa: proteggi la spalla.'], { also: ['trapezio'] }),
+    'Non salire oltre le spalle e non stringere troppo la presa: proteggi la spalla.'], { also: ['trapezio'], hidden: true }),   // tolto: rischio per la spalla
   E('Lateral_Raise_-_With_Bands', 'Alzate laterali con elastico', 'laterali', 'bw', { laterali: 1 }, 'Side_Lateral_Raise', 'corpo', [
     'In piedi sull’elastico, un capo per mano, braccia lungo i fianchi.',
     'Sali di lato fino all’altezza delle spalle.',
@@ -554,7 +554,7 @@ export const TARGETS = {
 // Priorità per esercizio: 3 alta (sempre), 2 media (a rotazione), 1 bassa (ogni tanto)
 export const DEFAULT_PLAN = {
   petto:       { Leverage_Chest_Press: 3, Leverage_Incline_Chest_Press: 2, Cable_Crossover: 2, Butterfly: 2, Low_Cable_Crossover: 1, Incline_Dumbbell_Press: 1 },
-  laterali:    { Cable_Seated_Lateral_Raise: 3, Side_Lateral_Raise: 2, Upright_Cable_Row: 1 },
+  laterali:    { Cable_Seated_Lateral_Raise: 3, Side_Lateral_Raise: 2 },
   bicipiti:    { Machine_Bicep_Curl: 3, Standing_Biceps_Cable_Curl: 3, 'Cable_Hammer_Curls_-_Rope_Attachment': 2, Incline_Dumbbell_Curl: 1 },
   tricipiti:   { 'Triceps_Pushdown_-_Rope_Attachment': 3, Cable_Rope_Overhead_Triceps_Extension: 2, Dip_Machine: 2, Standing_Dumbbell_Triceps_Extension: 1 },
   schiena:     { 'Wide-Grip_Lat_Pulldown': 3, Seated_Cable_Rows: 2, Leverage_Iso_Row: 2, 'Close-Grip_Front_Lat_Pulldown': 2, 'One-Arm_Dumbbell_Row': 1 },

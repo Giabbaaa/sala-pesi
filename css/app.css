@@ -307,3 +307,10 @@ button.back { padding: 4px 2px; font-weight: 600; }
 @media (prefers-reduced-motion: reduce) {
   .screen, .pop, .set.active.slide, .progress span.pop, .toast, .timer, .timer .t, .how.open, .sheet-bg, .sheet-card { animation: none !important; }
 }
+/* Barre del Piano: fascia in cui stare (chiara) e riempimento colorato */
+.zbar { position: relative; grid-column: 1 / -1; height: 12px; background: var(--card2); border-radius: 6px; overflow: hidden; }
+.zbar b { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--l1) 30%, var(--card2)); }
+.zbar i { position: relative; display: block; height: 100%; background: var(--lv); border-radius: 6px; opacity: .92; }
+.mrow .small.muted { align-self: end; font-variant-numeric: tabular-nums; }
+.durrow { margin: 4px 0 2px; gap: 8px; }
+.durrow .seg button { padding: 4px 9px; }

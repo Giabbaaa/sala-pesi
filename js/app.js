@@ -249,7 +249,7 @@ const pastState = () => { const d = state.current?.date || today(); return { ...
 const newItem = id => { const sg = E.suggestion(pastState(), id); return { id, planSets: 3, kg: sg.kg, reps: sg.reps, note: sg.note, ss: null, sets: [], skipped: false }; };
 
 // Una giornata salvata riaperta per continuare o modificare
-const fromSession = (s, date) => ({ date, reason: 'Allenamento di oggi', deload: s.deload, seed: s.seed, free: !!s.free, forced: true, cur: 0, view: 'list',
+const fromSession = (s, date) => ({ date, reason: 'Allenamento di oggi', deload: s.deload, seed: s.seed, free: !!s.free, forced: true, cur: 0, view: 'list', duration: s.duration, want: s.want,
   items: s.items.map(i => {
     if (i.id === 'cardio') return { id: 'cardio', minutes: i.minutes, planSets: 0, ss: null, skipped: !!i.skipped, sets: [...i.sets] };
     const x = newItem(i.id); const l = i.sets[i.sets.length - 1];
@@ -260,8 +260,8 @@ function ensureCurrent() {
   const c = state.current, t = today();
   if (c && c.date === t) return;
   const s = todaySession();
-  state.current = s ? fromSession(s, t) : E.compose(state, t);
-  state.current.minutes = E.itemMinutes(state.current.items);
+  state.current = s ? fromSession(s, t) : E.compose(state, t, Date.now(), ui.dur?.date === t ? ui.dur.min : null);
+  state.current.minutes = E.planMinutes(state, state.current);
   save();
 }
 
@@ -276,7 +276,7 @@ function openPast(k, addId) {
   const s = state.sessions.find(x => x.date === k);
   state.current = s ? fromSession(s, k) : { date: k, items: [], reason: '', free: false, forced: true, deload: false, seed: null, cur: 0, view: 'list' };
   if (addId) state.current.items.push(newItem(addId));
-  state.current.minutes = E.itemMinutes(state.current.items);
+  state.current.minutes = E.planMinutes(state, state.current);
 }
 function setDay(k) {
   const t = today();
@@ -298,10 +298,6 @@ function viewOggi() {
   const c = state.current?.date === day ? state.current : null;
   if (c?.view === 'ex' && c.items.length) return viewSession();
   let html = '';
-  if (!state.seenIntro) html += `<section class="alert"><b>Prima di iniziare</b>
-    <p class="small">Se un esercizio fa male in modo acuto o il dolore aumenta serie dopo serie, fermati e usa <b>Cambia</b>. Ginocchio: sulla leg press piedi alti e scendi solo fin dove non fa male.</p>
-    ${!matchMedia('(display-mode: standalone)').matches && !navigator.standalone ? '<p class="small">Per averla come app: in Safari tocca Condividi → Aggiungi alla schermata Home.</p>' : ''}
-    <button class="ghost" data-act="intro-ok">Ho capito</button></section>`;
   if (state.notice) html += `<section class="alert small">${esc(state.notice)} <button class="ghost" data-act="notice-ok">OK</button></section>`;
   html += day === t ? `<h1>Oggi</h1>` : `<div class="row between"><h1>${dayLabel(day)}</h1><button class="ghost" data-act="day" data-k="${t}">Torna a oggi</button></div>`;
   html += calendarCard();
@@ -447,18 +443,20 @@ function overview(c) {
   const nextG = groups.findIndex(gr => !gr.items.every(i => isDone(i) || i.skipped));
   const nextName = nextG >= 0 ? (groups[nextG].items[0].id === 'cardio' ? 'Cardio extra' : EX[groups[nextG].items[0].id].name) : '';
   const isToday = c.date === today();
+  const dur = c.duration || E.usualMinutes(state);
   return `<section class="card">
     ${isToday ? '' : `<div class="row between" style="margin-bottom:6px"><span class="small muted">Stai modificando un giorno passato</span><button class="ghost" data-act="past-close">Fine</button></div>`}
     <h3>${!isToday ? `Allenamento di ${dayLabel(c.date).toLowerCase()}` : c.free ? 'Esercizi di oggi' : 'Seduta di oggi'}${c.deload ? ' · scarico' : ''}</h3>
     ${c.free || !isToday ? '' : `<p class="reason">${esc(c.reason)}</p>`}
-    ${logs || !isToday ? '' : `<div class="summary"><span><b>${c.minutes}</b> min</span><span><b>${work.length}</b> esercizi</span><span><b>${all}</b> serie</span><span><b>${kc[0]}–${kc[1]}</b> kcal</span></div>
-    <p class="small muted">Prima 5–10 min di cardio leggero. Tocca il nome di un esercizio per aprirlo.</p>`}
+    ${logs || !isToday ? '' : `${c.free ? '' : `<div class="row between durrow"><span class="small muted">Tempo oggi</span><span class="seg">${E.DURATIONS.map(v => `<button class="${dur === v ? 'on' : ''}" data-act="today-dur" data-v="${v}">${v}′</button>`).join('')}</span></div>`}
+    <div class="summary"><span><b>${c.minutes}</b> min</span><span><b>${work.length}</b> esercizi</span><span><b>${all}</b> serie</span><span><b>${kc[0]}–${kc[1]}</b> kcal</span></div>
+    <p class="small muted">Prima ${E.warmMin(dur)} min di cardio leggero. Tocca il nome di un esercizio per aprirlo.</p>`}
     ${rows}
     <select data-in="ov-add" style="margin-top:12px">${addOptions('+ Aggiungi esercizio')}</select>
   </section>
   ${nextG >= 0 ? `<button class="primary big" data-act="open" data-g="${nextG}">${logs ? `Continua · ${esc(nextName)}` : 'Inizia'}</button>` : ''}
   ${!isToday ? '' : c.free ? `<div class="row" style="justify-content:center;margin-top:6px"><button class="ghost" data-act="full">Aggiungi la seduta completa di oggi</button></div>`
-    : logs ? '' : `<div class="row" style="justify-content:center;margin-top:6px"><button class="ghost" data-act="recompose">Ricomponi la seduta</button></div>`}`;
+    : logs ? (nextG >= 0 ? frettaBtn() : '') : `<div class="row" style="justify-content:center;margin-top:6px"><button class="ghost" data-act="recompose">Ricomponi la seduta</button></div>`}`;
 }
 
 // Una superserie vale solo se i suoi esercizi sono uno dopo l'altro: altrimenti si scioglie
@@ -531,7 +529,7 @@ function viewSession() {
         <div class="chips" style="margin-top:6px">${[1, 1.25, 2, 2.5, 5].map(v => `<button class="${v === st.inc ? 'on' : ''}" data-act="inc" data-id="${it.id}" data-v="${v}">${kg(v)} kg</button>`).join('')}</div></div>`;
     }
     const wu = !logged(it).length ? E.warmups(state, it.id, it.kg) : [];
-    const firstForMuscle = c.items.findIndex(x => x.id !== 'cardio' && EX[x.id].muscle === e.muscle) === idx;
+    const firstForMuscle = c.items.findIndex(x => x.id !== 'cardio' && EX[x.id]?.muscle === e.muscle && EX[x.id].type === 'multi') === idx;
     if (wu.length && firstForMuscle) html += `<p class="small" style="margin-top:10px"><b>Riscaldamento:</b> ${wu.map(w => `1×${w.reps} a ${kg(w.kg)} kg`).join(', poi ')}</p>`;
     if (it.note && !logged(it).length) html += `<p class="small" style="margin-top:6px;color:var(--ok)">${esc(it.note)}</p>`;
 
@@ -582,8 +580,11 @@ function viewSession() {
     <button class="grow" data-act="goto" data-g="${Math.max(0, c.cur - 1)}" ${c.cur === 0 ? 'disabled' : ''}>← Indietro</button>
     ${lastG ? `<button class="grow primary" data-act="list">Elenco ✓</button>` : `<button class="grow primary" data-act="goto" data-g="${c.cur + 1}">${gDone ? 'Prossimo esercizio →' : 'Avanti →'}</button>`}
   </div>`;
+  if (c.date === today() && !c.free && groups.some(gr => !gr.items.every(i => isDone(i) || i.skipped))) html += frettaBtn();
   return html;
 }
+
+const frettaBtn = () => `<div class="row" style="justify-content:center;margin-top:8px"><button class="ghost" data-act="fretta-open">Ho fretta</button></div>`;
 
 // Cambi dentro la scheda: "Cambia attrezzo" (macchina occupata → cavo → manubri → ...) e
 // "Cambia esercizio" (un altro con lo stesso attrezzo; in superserie, alla stessa postazione del compagno)
@@ -686,8 +687,13 @@ function viewPiano() {
     <p class="small muted" style="margin-top:10px">Dopo 12 sedute punto di controllo (peso e vita), dopo ${ci.length} (o prima, se 3 esercizi sono fermi) 3 sedute di scarico, poi ciclo nuovo. Obiettivi di serie: livello ${E.levelOf(state) + 1} di 3.</p></section>
 
   <h2>Serie per muscolo · ultimi 7 giorni</h2><section class="card">
-  ${MUSCLE_ORDER.map(m => { const t = E.targetFor(state, m); const v = Math.round(done7[m] * 2) / 2; const p = Math.min(100, v / t * 100);
-    return `<div class="mrow"><span>${MUSCLES[m].name}</span><span class="muted">${kg(v)} / ${t}</span><div class="bar ${lvOf(v / t)}"><i style="width:${p}%"></i></div></div>`; }).join('')}
+  ${MUSCLE_ORDER.map(m => { const t = E.targetFor(state, m); const v = Math.round(done7[m] * 2) / 2; const f = v / t;
+    // fascia in cui stare: da una seduta in meno (obiettivo × (sedute − 1) / sedute) al 120%; scala fino al 150%
+    // per i muscoli a priorità minima basta il pavimento (2 serie a settimana, contando le indirette)
+    const lo = s.priority[m] === 'minima' ? E.FLOOR / t : (E.freqOf(state) - 1) / E.freqOf(state), sc = x => Math.min(100, x / 1.5 * 100);
+    return `<div class="mrow"><span>${MUSCLES[m].name}</span><span class="small muted">${kg(v)} / ${t}</span>
+      <div class="zbar ${f > 1.3 ? 'lv3' : f >= lo ? 'lv1' : 'lv2'}"><b style="left:${sc(lo)}%;width:${sc(1.2) - sc(lo)}%"></b><i style="width:${Math.max(v ? 2 : 0, sc(f))}%"></i></div></div>`; }).join('')}
+  <p class="small muted" style="margin-top:8px">La fascia chiara è la zona in cui stare. Poco prima di allenarti è normale essere all’inizio della fascia.</p>
   </section>
 
   <h2>Ritmo</h2><section class="card stack">
@@ -810,7 +816,9 @@ function viewImpostazioni() {
   const planIds = MUSCLE_ORDER.flatMap(m => E.poolOf(state, m)).filter(id => !noKg(id));
   return `<h1>Impostazioni</h1>
   <h2>Allenamento</h2><section class="card stack">
-    <div class="row between"><span>Durata seduta</span><span class="seg">${[55, 65, 75].map(v => `<button class="${s.sessionMinutes === v ? 'on' : ''}" data-act="dur" data-v="${v}">${v}′</button>`).join('')}</span></div>
+    <div><span>Durata abituale della seduta</span>
+      <div class="seg" style="margin-top:8px">${E.DURATIONS.map(v => `<button class="${s.sessionMinutes === v ? 'on' : ''}" data-act="dur" data-v="${v}">${v}′</button>`).join('')}</div>
+      <p class="small muted" style="margin-top:6px">Ogni giorno puoi cambiarla in Oggi, prima di iniziare.</p></div>
     <div><span>Suono a fine recupero</span>
       <div class="seg" style="margin-top:8px">${[['off', 'no'], ['on', 'sì'], ['loud', 'anche in silenzioso']].map(([v, l]) => `<button class="${soundMode() === v ? 'on' : ''}" data-act="sound" data-v="${v}">${l}</button>`).join('')}</div>
       <p class="small muted" style="margin-top:6px">${soundMode() === 'loud' ? 'Suona anche con l’iPhone in silenzioso, ma può mettere in pausa la musica.' : soundMode() === 'on' ? 'Si sente sopra la musica, ma non con l’iPhone in silenzioso.' : 'A fine recupero il timer diventa verde, senza suono.'} Con lo schermo spento non suona.</p></div>
@@ -833,7 +841,7 @@ function viewImpostazioni() {
         <button class="ghost" data-act="snap" data-k="${x.k}">${ui.confirmSnap === x.k ? 'Conferma' : 'Ripristina'}</button></div>`; }).join('')}` : ''}
     <button class="danger" style="margin-top:14px" data-act="reset">${ui.confirmReset ? 'Tocca di nuovo per cancellare tutto' : 'Cancella tutti i dati'}</button>
   </section>
-  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.4 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.5 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
 }
 
 // ---------- Render ----------
@@ -859,7 +867,19 @@ function render() {
 
 // ---------- Scheda esercizio a comparsa (tenendo premuto in Piano) ----------
 function renderSheet() {
-  const el = $('#sheet'); const e = ui.sheet && EX[ui.sheet];
+  const el = $('#sheet');
+  if (ui.sheet === 'fretta') {
+    if (el.dataset.id === 'fretta' && !el.hidden) return;
+    el.dataset.id = 'fretta';
+    el.innerHTML = `<div class="sheet-bg" data-act="sheet-close"></div>
+      <div class="sheet-card" role="dialog" aria-modal="true" aria-label="Ho fretta">
+        <div class="row between" style="align-items:flex-start"><h3>Quanto tempo ti resta?</h3><button class="icon ghost" data-act="sheet-close" aria-label="Chiudi">✕</button></div>
+        <p class="small muted" style="margin:4px 0 12px">L’app tiene gli esercizi più utili e lascia il resto alle prossime sedute.</p>
+        <div class="chips">${[10, 15, 20, 30, 45].map(v => `<button data-act="fretta" data-v="${v}">${v} min</button>`).join('')}</div>
+      </div>`;
+    el.hidden = false; return;
+  }
+  const e = ui.sheet && EX[ui.sheet];
   if (!e) { if (!el.hidden) { el.hidden = true; el.innerHTML = ''; } return; }
   if (el.dataset.id === e.id && !el.hidden) return;
   el.dataset.id = e.id;
@@ -891,14 +911,30 @@ document.addEventListener('click', ev => {
   const el = ev.target.closest('[data-act]'); if (!el) return;
   const a = el.dataset.act; const c = state.current;
   const i = +el.dataset.i; const d = +el.dataset.d;
-  const rerender = () => { if (c) { tidySupersets(c); c.minutes = E.itemMinutes(c.items); sync(); } save(); render(); };
+  const rerender = () => { if (c) { tidySupersets(c); c.minutes = E.planMinutes(state, c); sync(); } save(); render(); };
   const replan = () => { if (c && !hasLogs(c)) state.current = null; };
   switch (a) {
     case 'intro-ok': state.seenIntro = true; return rerender();
     case 'cycle-ok': state.cycleBanner = null; return rerender();
     case 'notice-ok': state.notice = null; return rerender();
     case 'force': state.current = E.compose(state, today()); state.current.forced = true; save(); return render();
-    case 'recompose': { if (hasLogs(c)) return; const f = c?.forced; state.current = E.compose(state, today()); state.current.forced = f; toast('Seduta ricomposta'); save(); return render(); }
+    case 'recompose': { if (hasLogs(c)) return; const f = c?.forced; state.current = E.compose(state, today(), Date.now(), c?.duration); state.current.forced = f; toast('Seduta ricomposta'); save(); return render(); }
+    case 'today-dur': {
+      if (!c || hasLogs(c)) return;
+      const v = +el.dataset.v, f = c.forced; ui.dur = { date: today(), min: v };
+      state.current = E.compose(state, today(), Date.now(), v); state.current.forced = f; save(); return render();
+    }
+    case 'fretta-open': ui.sheet = 'fretta'; return renderSheet();
+    case 'fretta': {
+      closeSheet(); if (!c) return;
+      E.trimPlan(state, c, +el.dataset.v);
+      const gs = E.groupItems(c.items);
+      c.cur = Math.max(0, gs.findIndex(gr => !gr.items.every(i => isDone(i) || i.skipped)));
+      if (c.cur === 0 && gs.every(gr => gr.items.every(i => isDone(i) || i.skipped))) c.view = 'list';
+      const left = gs.filter(gr => !gr.items.every(i => isDone(i) || i.skipped)).length;
+      toast(left ? `Seduta accorciata: ${left === 1 ? 'resta un esercizio' : `restano ${left} esercizi`}` : 'Per oggi basta così');
+      sync(); save(); return render();
+    }
     case 'open': return go(+el.dataset.g);
     case 'day': { const k = el.dataset.k; if (!el.closest('#strip')) ui.stripX = null; return setDay(k); }
     case 'past-open': openPast(el.dataset.k); save(); return render();
@@ -920,7 +956,7 @@ document.addEventListener('click', ev => {
       const n = E.compose(state, today());
       const keep = c.items.filter(x => logged(x).length);
       n.items = [...keep, ...n.items.filter(x => !keep.some(k => k.id === x.id))];
-      Object.assign(n, { forced: true, view: 'list', cur: 0 }); n.minutes = E.itemMinutes(n.items);
+      Object.assign(n, { forced: true, view: 'list', cur: 0 }); n.minutes = E.planMinutes(state, n);
       state.current = n; sync(); save(); return render();
     }
     case 'list': return showList();
@@ -1007,13 +1043,13 @@ document.addEventListener('change', ev => {
   const c = state.current;
   switch (k) {
     case 'ov-add': if (el.value) {
-      c.items.push(newItem(el.value)); c.minutes = E.itemMinutes(c.items);
+      c.items.push(newItem(el.value)); c.minutes = E.planMinutes(state, c);
       if (hasLogs(c) || c.free || c.date !== today()) return go(E.groupItems(c.items).length - 1);   // durante l'allenamento si apre subito
     } break;
     case 'past-add': if (el.value) { openPast(el.dataset.k, el.value); save(); return go(E.groupItems(state.current.items).length - 1); } break;
     case 'free-add': if (el.value) {
       state.current = { date: today(), items: [newItem(el.value)], reason: '', free: true, forced: true, deload: false, seed: null, cur: 0, view: 'list', minutes: 0 };
-      state.current.minutes = E.itemMinutes(state.current.items);
+      state.current.minutes = E.planMinutes(state, state.current);
       return go(0);
     } break;
     case 'draft-kg': return; // gestito dall'evento input, senza ridisegnare (non perde il tocco sui bottoni)
