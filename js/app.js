@@ -723,7 +723,8 @@ function logSet(eff) {
         // passa da solo all'esercizio dopo (se nel frattempo non hai già cambiato schermata o tolto la serie)
         const from = c.cur, still = () => state.current === c && c.view === 'ex' && c.cur === from && g.items.every(i => isDone(i) || i.skipped);
         clearTimeout(ui.advance);
-        if (anyG >= 0 && anyG !== c.cur) ui.advance = setTimeout(() => { if (still()) go(anyG); }, 700);
+        // dopo una superserie si resta qui: si va avanti con "Avanti"
+        if (anyG >= 0 && anyG !== c.cur && g.items.length === 1) ui.advance = setTimeout(() => { if (still()) go(anyG); }, 700);
         else if (anyG < 0) ui.advance = setTimeout(() => { if (still()) { ui.flashDone = true; showList(); } }, 700);
       } else startRest(rest, `poi serie ${counts[0] + 1}`);
     }
@@ -992,6 +993,26 @@ function download(name, text, type) {
 }
 
 // ---------- Azioni ----------
+// + e −: il carico va di 1 kg (di una piastra sulle macchine in libbre), le ripetizioni di 1 (5 s a tempo).
+// Tenendo premuto il numero scorre a raffica.
+function stepDraft(a, d) {
+  const c = state.current; if (!c || !ui.draft) return;
+  const it = c.items[ui.draft.i];
+  if (a === 'kg') ui.draft.kg = isLb(it.id) ? E.stepLoad(state, it.id, ui.draft.kg, d) : Math.max(0, Math.round(((ui.draft.kg ?? 0) + d) * 100) / 100);
+  else ui.draft.reps = Math.max(1, ui.draft.reps + d * (EX[it.id].type === 'time' ? 5 : 1));
+  render();
+}
+let hold = null;
+document.addEventListener('pointerdown', ev => {
+  const b = ev.target.closest?.('[data-act=kg],[data-act=reps]');
+  if (hold) clearTimeout(hold.t);
+  hold = null; if (!b || !ui.draft) return;
+  const a = b.dataset.act, d = +b.dataset.d;
+  const tick = n => { hold.fired = true; stepDraft(a, d); hold.t = setTimeout(() => tick(n + 1), n < 6 ? 160 : 70); };
+  hold = { fired: false, t: setTimeout(() => tick(0), 400) };
+});
+for (const t of ['pointerup', 'pointercancel']) document.addEventListener(t, () => { if (hold) clearTimeout(hold.t); });
+
 document.addEventListener('click', ev => {
   unlockAudio();
   const tab = ev.target.closest('[data-tab]');
@@ -1076,8 +1097,7 @@ document.addEventListener('click', ev => {
     case 'ov-join': { const tag = 'u' + Date.now(); c.items[i].ss = tag; c.items[i + 1].ss = tag; const m = Math.max(c.items[i].planSets, c.items[i + 1].planSets); c.items[i].planSets = c.items[i + 1].planSets = m; return rerender(); }
     case 'ov-split': { const tag = c.items[i].ss; c.items.forEach(x => { if (x.ss === tag) x.ss = null; }); return rerender(); }
     case 'goto': return go(+el.dataset.g);
-    case 'kg': { if (!ui.draft) return; const it = c.items[ui.draft.i]; ui.draft.kg = E.stepLoad(state, it.id, ui.draft.kg, d); return render(); }
-    case 'reps': { const it = c.items[ui.draft.i]; const step = EX[it.id].type === 'time' ? 5 : 1; ui.draft.reps = Math.max(1, ui.draft.reps + d * step); return render(); }
+    case 'kg': case 'reps': if (hold?.fired) { hold = null; return; } return stepDraft(a, d);
     case 'log': return logSet(el.dataset.eff);
     case 'edit-set': ui.editSet = { i, s: +el.dataset.s }; ui.draft = null; return render();
     case 'edit-cancel': ui.editSet = null; ui.draft = null; return render();
