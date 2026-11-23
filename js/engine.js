@@ -100,7 +100,36 @@ export function exSettings(state, id) {
   const s = state.settings.ex[id] || {};
   const defInc = e.inc || (e.equip === 'manubri' ? 2 : 2.5);
   const bar = e.equip === 'bilanciere';
-  return { inc: s.inc ?? defInc, incSet: s.inc != null, plates: s.plates ?? bar, base: s.base ?? (bar ? (e.bar ?? 20) : 0), note: s.note || '' };
+  const lb = s.inc === 'lb';
+  return { inc: lb ? 15 * LB : (s.inc ?? defInc), lb, incSet: s.inc != null, plates: s.plates ?? bar, base: s.base ?? (bar ? (e.bar ?? 20) : 0), note: s.note || '' };
+}
+
+// ---------- Pacco pesi in libbre ----------
+// Molte macchine della palestra di Giabba hanno il pacco in libbre: 10, 20, 30, 40, 50, poi di 15 in 15.
+// I dati restano sempre in kg (conversione esatta); l'app mostra le libbre, cioè il numero dove si mette il perno.
+export const LB = 0.45359237;
+export const STACK_LB = [10, 20, 30, 40, 50, ...Array.from({ length: 24 }, (_, i) => 65 + 15 * i)];
+export const lbToKg = lb => Math.round(lb * LB * 100) / 100;
+export const kgToLb = kg => Math.round(kg / LB);
+const STACK_KG = STACK_LB.map(lbToKg);
+export const canLb = id => ['macchina', 'cavo'].includes(EX[id]?.equip) && !['time', 'bw'].includes(EX[id]?.type);
+// Carico più vicino che l'attrezzo permette davvero
+export function snapLoad(state, id, kg) {
+  const { lb, inc } = exSettings(state, id);
+  if (kg == null) return kg;
+  if (!lb) return roundTo(kg, inc);
+  return STACK_KG.reduce((a, b) => Math.abs(b - kg) < Math.abs(a - kg) ? b : a);
+}
+// d scatti in su (d>0) o in giù (d<0) dal carico kg
+export function stepLoad(state, id, kg, d) {
+  const { lb, inc } = exSettings(state, id);
+  if (!lb) return Math.max(0, Math.round(((kg ?? 0) + d * inc) * 100) / 100);
+  let k = kg ? snapLoad(state, id, kg) : 0;   // si parte dal peso del pacco più vicino
+  for (let i = 0; i < Math.abs(d); i++) {
+    const nx = d > 0 ? STACK_KG.find(v => v > k + 0.01) : [...STACK_KG].reverse().find(v => v < k - 0.01);
+    if (nx == null) break; k = nx;
+  }
+  return k;
 }
 
 // ---------- Priorità per esercizio ----------
@@ -359,12 +388,13 @@ export function longestBreak(state, from, today = dayKey()) {
 }
 
 export function suggestion(state, id, today = dayKey()) {
-  const e = EX[id]; const r = TYPE_RULES[e.type]; const { inc } = exSettings(state, id);
+  const e = EX[id]; const r = TYPE_RULES[e.type];
+  const down = (k0, f) => { const k = snapLoad(state, id, k0 * f); return k < k0 ? k : stepLoad(state, id, k0, -1); };
   const h = history(state, id).filter(p => !p.deload);
   const isTime = e.type === 'time';
   const noKg = isTime || e.type === 'bw';            // a tempo o a corpo libero: si progredisce con tempo/ripetizioni
   if (!h.length) {
-    const kg = noKg ? 0 : (START_LOADS[id] ?? null);
+    const kg = noKg ? 0 : snapLoad(state, id, START_LOADS[id] ?? null);
     return { kg, reps: r.min, note: kg == null ? 'Prima serie di prova: scegli tu il carico' : '', last: null };
   }
   const last = h[0]; const sets = last.sets;
@@ -374,28 +404,29 @@ export function suggestion(state, id, today = dayKey()) {
   let kg = kg0, reps = Math.max(r.min, Math.min(r.max, minReps + (isTime ? 5 : 1))), note = '';
   const allTop = sets.every(s => s.reps >= r.max) && sets.every(s => s.eff !== 'limite');
   const allEasy = sets.every(s => s.eff === 'facile');
-  if (gap >= 28) { kg = roundTo(kg0 * 0.8, inc); reps = r.min; note = noKg ? 'Ripresa dopo una pausa: si riparte dal minimo' : 'Ripresa dopo una pausa: −20%'; }
-  else if (gap >= 14) { kg = roundTo(kg0 * 0.9, inc); reps = r.min; note = noKg ? 'Ripresa dopo una pausa: si riparte dal minimo' : 'Ripresa dopo una pausa: −10%'; }
-  else if (stalled(state, id)) { kg = roundTo(kg0 * 0.9, inc); reps = r.min; note = noKg ? 'Fermo da 3 sedute: si riparte dal minimo' : 'Fermo da 3 sedute: −10% e si risale'; }
+  if (gap >= 28) { kg = down(kg0, 0.8); reps = r.min; note = noKg ? 'Ripresa dopo una pausa: si riparte dal minimo' : 'Ripresa dopo una pausa: −20%'; }
+  else if (gap >= 14) { kg = down(kg0, 0.9); reps = r.min; note = noKg ? 'Ripresa dopo una pausa: si riparte dal minimo' : 'Ripresa dopo una pausa: −10%'; }
+  else if (stalled(state, id)) { kg = down(kg0, 0.9); reps = r.min; note = noKg ? 'Fermo da 3 sedute: si riparte dal minimo' : 'Fermo da 3 sedute: −10% e si risale'; }
   else if (allTop) {
     if (noKg) { reps = r.max; note = isTime ? 'Tempo al massimo: prova una variante più dura' : 'Ripetizioni al massimo: prova una variante più dura o aggiungi peso'; }
     else {
       const steps = allEasy ? 2 : 1;
-      kg = Math.min(kg0 + steps * inc, Math.max(kg0 + inc, roundTo(kg0 * 1.1, inc)));
-      reps = r.min; note = `Sali di carico: +${fmtKg(kg - kg0)} kg`;
+      const one = stepLoad(state, id, kg0, 1);
+      kg = exSettings(state, id).lb ? one : Math.min(stepLoad(state, id, kg0, steps), Math.max(one, snapLoad(state, id, kg0 * 1.1)));
+      reps = r.min; note = exSettings(state, id).lb ? `Sali di carico: +${kgToLb(kg) - kgToLb(snapLoad(state, id, kg0))} lb` : `Sali di carico: +${fmtKg(kg - kg0)} kg`;
     }
   } else if (sets[0].reps < r.min && sets[0].eff === 'limite' && !noKg) {
-    kg = Math.max(inc, roundTo(kg0 * 0.925, inc)); reps = r.min; note = 'Troppo pesante l’ultima volta: carico ridotto';
+    kg = Math.max(stepLoad(state, id, 0, 1), down(kg0, 0.925)); reps = r.min; note = 'Troppo pesante l’ultima volta: carico ridotto';
   }
   if (noKg) kg = 0;
+  else if (kg && exSettings(state, id).lb) kg = snapLoad(state, id, kg);   // vale anche per i carichi segnati prima di passare alle libbre
   return { kg, reps, note, last };
 }
 
 export function warmups(state, id, kg) {
   const e = EX[id];
   if (e.type !== 'multi' || !kg) return [];
-  const { inc } = exSettings(state, id);
-  return [{ kg: roundTo(kg * 0.5, inc), reps: 10 }, { kg: roundTo(kg * 0.75, inc), reps: 5 }];
+  return [{ kg: snapLoad(state, id, kg * 0.5), reps: 10 }, { kg: snapLoad(state, id, kg * 0.75), reps: 5 }];
 }
 
 export function platesPerSide(state, id, kg) {
@@ -908,8 +939,7 @@ export function cycleGoals(state, today = dayKey()) {
     const ref = before || first;
     const from = ref ? Math.max(...ref.sets.map(x => x.kg || 0)) : START_LOADS[id];
     if (!from) continue;
-    const { inc } = exSettings(state, id);
-    const to = Math.max(from + inc, roundTo(from * 1.075, inc));
+    const to = Math.max(stepLoad(state, id, from, 1), snapLoad(state, id, from * 1.075));
     const now = all[0] ? Math.max(...all[0].sets.map(x => x.kg || 0)) : null;
     out.push({ id, from, to, reps: TYPE_RULES[EX[id].type].max, now });
     if (out.length === 3) break;

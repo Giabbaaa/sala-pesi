@@ -170,9 +170,12 @@ function toast(msg) {
 // ---------- Helper di visualizzazione ----------
 const repsLabel = (id, r) => EX[id].type === 'time' ? `${r} s` : `${r}`;
 const rangeLabel = id => { const r = TYPE_RULES[EX[id].type]; return `${r.min}–${r.max}${r.unit ? ' s' : ''}`; };
-const loadLabel = (id, k) => ['time', 'bw'].includes(EX[id].type) ? 'corpo libero' : k == null ? 'carico da provare' : `${kg(k)} kg`;
+// Carico come si legge sull'attrezzo: in libbre per le macchine col pacco in libbre
+const isLb = id => E.exSettings(state, id).lb;
+const load = (id, k) => isLb(id) ? `${E.kgToLb(k)} lb` : `${kg(k)} kg`;
+const loadLabel = (id, k) => ['time', 'bw'].includes(EX[id].type) ? 'corpo libero' : k == null ? 'carico da provare' : load(id, k);
 // Testo di una serie: "55 kg × 10", "12 ripetizioni" (corpo libero) o "40 s" (a tempo)
-const setTxt = (id, x) => EX[id].type === 'time' ? `${x.reps} s` : EX[id].type === 'bw' ? `${x.reps} ripetizioni` : `${kg(x.kg)} kg × ${x.reps}`;
+const setTxt = (id, x) => EX[id].type === 'time' ? `${x.reps} s` : EX[id].type === 'bw' ? `${x.reps} ripetizioni` : `${load(id, x.kg)} × ${x.reps}`;
 const EFFS = [['facile', 'Facile', '4+ in riserva', 'lv1'], ['giusto', 'Giusto', '1–3 in riserva', 'lv2'], ['limite', 'Al limite', '0 in riserva', 'lv3']];
 // Muscoli coinvolti, coi tre colori: arancio principale, giallo secondario, verde aiuta
 function musclesHtml(e) {
@@ -563,7 +566,8 @@ function curGroup(c) {
 function setDefaults(c, it, i) {
   const l = logged(it);
   const prev = l[l.length - 1];
-  return { kg: it.adjKg ?? (prev ? prev.kg : it.kg), reps: it.reps };
+  const k = it.adjKg ?? (prev ? prev.kg : it.kg);
+  return { kg: k != null && isLb(it.id) ? E.snapLoad(state, it.id, k) : k, reps: it.reps };
 }
 
 const INFO_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 4.2a1.3 1.3 0 1 1 0 2.6 1.3 1.3 0 0 1 0-2.6zM13.5 17h-3v-1.5h.8V11h-.8V9.5h2.2V15.5h.8z"/></svg>';
@@ -611,11 +615,11 @@ function viewSession() {
       ${(() => { const sw = swapButtons(c, g, it, idx, usedIds); return sw ? `<div class="ctrls">${sw}</div>` : ''; })()}`;
     if (!st.incSet && !noKg(it.id)) {
       html += `<div style="margin-top:10px"><p class="small"><b>Di quanto sale il carico su questo attrezzo?</b> Lo chiedo una volta sola.</p>
-        <div class="chips" style="margin-top:6px">${[1, 1.25, 2, 2.5, 5].map(v => `<button class="${v === st.inc ? 'on' : ''}" data-act="inc" data-id="${it.id}" data-v="${v}">${kg(v)} kg</button>`).join('')}</div></div>`;
+        <div class="chips" style="margin-top:6px">${[1, 1.25, 2, 2.5, 5].map(v => `<button class="${v === st.inc ? 'on' : ''}" data-act="inc" data-id="${it.id}" data-v="${v}">${kg(v)} kg</button>`).join('')}${E.canLb(it.id) ? `<button data-act="inc" data-id="${it.id}" data-v="lb">pacco in libbre</button>` : ''}</div></div>`;
     }
     const wu = !logged(it).length ? E.warmups(state, it.id, it.kg) : [];
     const firstForMuscle = c.items.findIndex(x => x.id !== 'cardio' && EX[x.id]?.muscle === e.muscle && EX[x.id].type === 'multi') === idx;
-    if (wu.length && firstForMuscle) html += `<p class="small" style="margin-top:10px"><b>Riscaldamento:</b> ${wu.map(w => `1×${w.reps} a ${kg(w.kg)} kg`).join(', poi ')}</p>`;
+    if (wu.length && firstForMuscle) html += `<p class="small" style="margin-top:10px"><b>Riscaldamento:</b> ${wu.map(w => `1×${w.reps} a ${load(it.id, w.kg)}`).join(', poi ')}</p>`;
     if (it.note && !logged(it).length) html += `<p class="small" style="margin-top:6px;color:var(--ok)">${esc(it.note)}</p>`;
 
     // Serie: tinta per numero di serie; sulle serie fatte si tocca lo sforzo per cambiarlo, di nuovo per toglierla
@@ -641,7 +645,7 @@ function viewSession() {
         const plates = E.platesPerSide(state, it.id, d.kg);
         html += `<div class="set active ${lv} ${fl || editing ? 'slide' : ''}"><div class="row between"><b>Serie ${i + 1}${editing ? ' · modifica' : ''}</b><span class="lastline">${esc(lastTxt)}</span></div>
           <div class="steppers ${noKg(it.id) ? 'one' : ''}">
-            ${noKg(it.id) ? '' : `<div class="stepper"><button data-act="kg" data-d="-1" aria-label="Meno peso">−</button><b><input class="kgin" type="text" inputmode="decimal" value="${d.kg == null ? '' : kg(d.kg)}" placeholder="?" data-in="draft-kg" aria-label="Carico in kg"><small>kg</small></b><button data-act="kg" data-d="1" aria-label="Più peso">+</button></div>`}
+            ${noKg(it.id) ? '' : `<div class="stepper"><button data-act="kg" data-d="-1" aria-label="Meno peso">−</button><b><input class="kgin" type="text" inputmode="decimal" value="${d.kg == null ? '' : st.lb ? E.kgToLb(d.kg) : kg(d.kg)}" placeholder="?" data-in="draft-kg" aria-label="Carico in ${st.lb ? 'libbre' : 'kg'}">${E.canLb(it.id) ? `<small class="unit" data-act="unit" data-id="${it.id}">${st.lb ? `lb${d.kg ? ` · ${kg(d.kg < 9 ? Math.round(d.kg * 10) / 10 : Math.round(d.kg))} kg` : ''}` : 'kg'} ⇄</small>` : '<small>kg</small>'}</b><button data-act="kg" data-d="1" aria-label="Più peso">+</button></div>`}
             <div class="stepper"><button data-act="reps" data-d="-1" aria-label="Meno">−</button><b>${d.reps}<small>${e.type === 'time' ? 'secondi' : 'ripetizioni'}</small></b><button data-act="reps" data-d="1" aria-label="Più">+</button></div>
           </div>
           ${plates ? `<p class="small muted" style="margin:-2px 0 8px">Per lato: ${plates.plates.length ? plates.plates.map(kg).join(' + ') : 'nessun disco'}${plates.rest > 0 ? ` (mancano ${kg(plates.rest)} kg per lato con i tuoi dischi)` : ''}</p>` : ''}
@@ -699,7 +703,8 @@ function logSet(eff) {
   // Al limite già alla prima serie sotto il minimo: le serie seguenti si alleggeriscono
   const r = TYPE_RULES[e.type];
   if (d.s === 0 && eff === 'limite' && d.reps < r.min && !noKg(it.id)) {
-    it.adjKg = Math.max(E.exSettings(state, it.id).inc, E.roundTo(d.kg * 0.925, E.exSettings(state, it.id).inc));
+    const lower = E.snapLoad(state, it.id, d.kg * 0.925);
+    it.adjKg = Math.max(E.stepLoad(state, it.id, 0, 1), lower < d.kg ? lower : E.stepLoad(state, it.id, d.kg, -1));
   } else if (d.s === 0) delete it.adjKg;
   ui.editSet = null; ui.draft = null; ui.flash = { i: d.i, s: d.s };
   if (!wasDone && isDone(it)) ui.flashEx = d.i;
@@ -752,7 +757,7 @@ function goalsHtml() {
     <div class="bar ${lvOf(p)}"><i style="width:${Math.max(3, Math.min(100, p * 100))}%"></i></div><div class="small muted">${sub}</div></div>`;
   let html = g.lifts.map(x => {
     const p = x.now == null ? 0 : Math.max(0, (x.now - x.from) / (x.to - x.from));
-    return row(esc(EX[x.id].name), `<b>${kg(x.to)} kg</b> × ${x.reps}`, `partenza ${kg(x.from)} kg${x.now != null ? ` · ora ${kg(x.now)} kg` : ''}`, p);
+    return row(esc(EX[x.id].name), `<b>${load(x.id, x.to)}</b> × ${x.reps}`, `partenza ${load(x.id, x.from)}${x.now != null ? ` · ora ${load(x.id, x.now)}` : ''}`, p);
   }).join('');
   if (g.weight) {
     const w = g.weight, p = w.from > w.to ? Math.max(0, (w.from - w.now) / (w.from - w.to)) : 0;
@@ -840,7 +845,7 @@ function viewProgressi() {
     if (!best[it.id] || v > best[it.id].v) best[it.id] = { v, st, date: s.date };
   }
   const recs = Object.entries(best).sort((a, b) => b[1].v - a[1].v);
-  if (recs.length) html += `<h2>Record personali</h2><section class="card">${recs.map(([id, b]) => `<div class="mrow"><span>${esc(EX[id].name)}</span><span><b>${kg(b.st.kg)} × ${b.st.reps}</b> <span class="muted small">${kg(Math.round(b.v))} kg stim.</span></span></div>`).join('')}</section>`;
+  if (recs.length) html += `<h2>Record personali</h2><section class="card">${recs.map(([id, b]) => `<div class="mrow"><span>${esc(EX[id].name)}</span><span><b>${load(id, b.st.kg)} × ${b.st.reps}</b> <span class="muted small">${kg(Math.round(b.v))} kg stim.</span></span></div>`).join('')}</section>`;
 
   // Costanza: 12 settimane
   const days = new Set(ss.map(s => s.date));
@@ -912,9 +917,9 @@ function viewImpostazioni() {
   <h2>Dischi disponibili</h2><section class="card"><div class="chips">${[25, 20, 15, 10, 5, 2.5, 1.25].map(p => `<button class="${s.plates.includes(p) ? 'on' : ''}" data-act="plate" data-v="${p}">${kg(p)} kg</button>`).join('')}</div>
     <p class="small muted" style="margin-top:8px">Per gli attrezzi a dischi l’app ti dice cosa mettere per lato.</p></section>
   <h2>Attrezzi</h2><section class="card">
-    <p class="small muted">Salto di carico, se si carica con i dischi e il peso a vuoto (slitta o bilanciere).</p>
+    <p class="small muted">Salto di carico (o “libbre” per le macchine col pacco in libbre), se si carica con i dischi e il peso a vuoto (slitta o bilanciere).</p>
     ${planIds.map(id => { const x = E.exSettings(state, id); return `<div class="exset"><span>${esc(EX[id].name)}</span>
-      <select data-in="ex-inc" data-id="${id}">${[1, 1.25, 2, 2.5, 5].map(v => `<option value="${v}" ${v === x.inc ? 'selected' : ''}>+${kg(v)}</option>`).join('')}</select>
+      <select data-in="ex-inc" data-id="${id}">${[1, 1.25, 2, 2.5, 5].map(v => `<option value="${v}" ${!x.lb && v === x.inc ? 'selected' : ''}>+${kg(v)}</option>`).join('')}${E.canLb(id) ? `<option value="lb" ${x.lb ? 'selected' : ''}>libbre</option>` : ''}</select>
       <button class="${x.plates ? 'primary' : ''}" style="min-height:36px;padding:4px 10px;font-size:13px" data-act="ex-plates" data-id="${id}">dischi</button>
       ${x.plates ? `<span class="small muted" style="grid-column:1/2">peso a vuoto</span><input type="text" inputmode="decimal" value="${kg(x.base)}" data-in="ex-base" data-id="${id}">` : ''}</div>`; }).join('')}
   </section>
@@ -927,7 +932,7 @@ function viewImpostazioni() {
         <button class="ghost" data-act="snap" data-k="${x.k}">${ui.confirmSnap === x.k ? 'Conferma' : 'Ripristina'}</button></div>`; }).join('')}` : ''}
     <button class="danger" style="margin-top:14px" data-act="reset">${ui.confirmReset ? 'Tocca di nuovo per cancellare tutto' : 'Cancella tutti i dati'}</button>
   </section>
-  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.6 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.7 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
 }
 
 // ---------- Render ----------
@@ -1071,7 +1076,7 @@ document.addEventListener('click', ev => {
     case 'ov-join': { const tag = 'u' + Date.now(); c.items[i].ss = tag; c.items[i + 1].ss = tag; const m = Math.max(c.items[i].planSets, c.items[i + 1].planSets); c.items[i].planSets = c.items[i + 1].planSets = m; return rerender(); }
     case 'ov-split': { const tag = c.items[i].ss; c.items.forEach(x => { if (x.ss === tag) x.ss = null; }); return rerender(); }
     case 'goto': return go(+el.dataset.g);
-    case 'kg': { if (!ui.draft) return; const it = c.items[ui.draft.i]; const inc = E.exSettings(state, it.id).inc; ui.draft.kg = Math.max(0, Math.round(((ui.draft.kg ?? 0) + d * inc) * 100) / 100); return render(); }
+    case 'kg': { if (!ui.draft) return; const it = c.items[ui.draft.i]; ui.draft.kg = E.stepLoad(state, it.id, ui.draft.kg, d); return render(); }
     case 'reps': { const it = c.items[ui.draft.i]; const step = EX[it.id].type === 'time' ? 5 : 1; ui.draft.reps = Math.max(1, ui.draft.reps + d * step); return render(); }
     case 'log': return logSet(el.dataset.eff);
     case 'edit-set': ui.editSet = { i, s: +el.dataset.s }; ui.draft = null; return render();
@@ -1084,7 +1089,13 @@ document.addEventListener('click', ev => {
       if (c.items[i].skipped && g.items.every(x => isDone(x) || x.skipped)) { const n = groups.findIndex((gr, gi) => gi > c.cur && !gr.items.every(x => isDone(x) || x.skipped)); if (n >= 0) { sync(); return go(n); } }
     } return rerender();
     case 'cardio-done': { const it = c.items[i]; it.sets = it.sets.length ? [] : [{ kg: 0, reps: it.minutes, eff: 'giusto', t: Date.now() }]; if (it.sets.length) ui.flashEx = i; return rerender(); }
-    case 'inc': state.settings.ex[el.dataset.id] = { ...(state.settings.ex[el.dataset.id] || {}), inc: +el.dataset.v }; return rerender();
+    case 'inc': state.settings.ex[el.dataset.id] = { ...(state.settings.ex[el.dataset.id] || {}), inc: el.dataset.v === 'lb' ? 'lb' : +el.dataset.v }; return rerender();
+    case 'unit': { // kg ⇄ pacco in libbre, direttamente dalla serie
+      const id = el.dataset.id, x = state.settings.ex[id] || {};
+      state.settings.ex[id] = x.inc === 'lb' ? { ...x, inc: x.incKg ?? E.exSettings({ settings: { ex: {} } }, id).inc } : { ...x, inc: 'lb', incKg: typeof x.inc === 'number' ? x.inc : undefined };
+      if (ui.draft?.kg != null) ui.draft.kg = E.snapLoad(state, id, ui.draft.kg);
+      toast(isLb(id) ? 'Pacco in libbre: segni il numero dove metti il perno' : 'Carico in kg');
+      return rerender(); }
     case 'rest+': state.rest.end += 15000; save(); return tickTimer();
     case 'rest-skip': state.rest = null; save(); return tickTimer();
     case 'freq': state.settings.freq = +el.dataset.v; replan(); return rerender();
@@ -1146,7 +1157,7 @@ document.addEventListener('change', ev => {
     case 'note': state.settings.ex[el.dataset.id] = { ...(state.settings.ex[el.dataset.id] || {}), note: el.value.trim() }; save(); return;
     case 'weight': case 'cp-weight': { const v = num(); if (!(v > 30 && v < 300)) return; const w = state.body.weights.filter(x => x.date !== today()); w.push({ date: today(), kg: v }); w.sort((a, b) => a.date.localeCompare(b.date)); state.body.weights = w; E.nutritionCheck(state); toast('Peso salvato'); break; }
     case 'waist': case 'cp-waist': { const v = num(); if (!(v > 40 && v < 200)) return; const w = state.body.waist.filter(x => x.date !== today()); w.push({ date: today(), cm: v }); state.body.waist = w; toast('Vita salvata'); break; }
-    case 'ex-inc': state.settings.ex[el.dataset.id] = { ...(state.settings.ex[el.dataset.id] || {}), inc: +el.value }; break;
+    case 'ex-inc': state.settings.ex[el.dataset.id] = { ...(state.settings.ex[el.dataset.id] || {}), inc: el.value === 'lb' ? 'lb' : +el.value }; break;
     case 'ex-base': state.settings.ex[el.dataset.id] = { ...(state.settings.ex[el.dataset.id] || {}), base: num() || 0 }; break;
     case 'import': {
       const f = el.files[0]; if (!f) return;
@@ -1165,7 +1176,8 @@ document.addEventListener('input', ev => {
   const el = ev.target;
   if (el.dataset.in === 'draft-kg' && ui.draft) {
     const v = parseFloat(String(el.value).replace(',', '.'));
-    ui.draft.kg = !isNaN(v) && v >= 0 ? v : null;
+    const lb = isLb(state.current.items[ui.draft.i].id);
+    ui.draft.kg = !isNaN(v) && v >= 0 ? (lb ? E.lbToKg(v) : v) : null;
   }
 });
 

@@ -178,6 +178,7 @@ button.back { padding: 4px 2px; font-weight: 600; }
 .stepper b { font-size: 26px; letter-spacing: -0.02em; }
 .kgin { background: none !important; border: 0 !important; text-align: center; font-size: 26px !important; font-weight: 700; width: 100% !important; min-height: 34px !important; padding: 0 !important; letter-spacing: -0.02em; }
 .stepper small { display: block; font-size: 12px; color: var(--muted); font-weight: 400; }
+.stepper small.unit { color: var(--accent, var(--ok)); cursor: pointer; padding: 2px 0; }
 .stepper button { height: 48px; font-size: 22px; padding: 0; background: var(--card); }
 .steppers { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 8px 0; }
 .steppers.one { grid-template-columns: minmax(0, 220px); justify-content: center; }
