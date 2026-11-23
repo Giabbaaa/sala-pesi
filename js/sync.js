@@ -5,8 +5,8 @@
 const CONF = 'salapesi.gh';
 const API = 'https://api.github.com';
 export const DEFAULTS = { repo: 'Giabbaaa/sala-pesi', branch: 'dati', path: 'salapesi.json' };
-// Pagina di GitHub per creare la chiave, con nome, scadenza e permesso già proposti
-export const TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new?name=Sala%20pesi&description=Copia%20dei%20dati%20dell%27app&expires_in=366&contents=write';
+// Pagina di GitHub per creare la chiave (senza valori precompilati: con la scadenza precompilata la conferma non partiva)
+export const TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new';
 
 export function ghConf() {
   try { const c = JSON.parse(localStorage.getItem(CONF) || 'null'); return c && c.token ? { ...DEFAULTS, ...c } : null; } catch { return null; }
