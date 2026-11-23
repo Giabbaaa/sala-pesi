@@ -190,15 +190,19 @@ const visible = e => !e.hidden;
 const musclesLine = id => Object.entries(EX[id].work).map(([m, w]) => w >= 1 ? MUSCLES[m].name : `${MUSCLES[m].name.toLowerCase()} (in parte)`).join(' · ');
 
 // Calendario: 15 giorni indietro e 15 avanti, scorrevole; un tocco su un giorno lo apre
+// Intestazione di Oggi: la data per esteso (l'unico posto dove compare), sopra quanto dista da oggi
+function dayHead(day, t) {
+  const n = E.diffDays(day, t), d = E.parseDay(day);
+  const rel = n === 0 ? 'Oggi' : n === 1 ? 'Domani' : n === -1 ? 'Ieri' : n > 0 ? `Tra ${n} giorni` : `${-n} giorni fa`;
+  const wd = E.DAY_NAMES[d.getDay()];
+  const year = d.getFullYear() !== E.parseDay(t).getFullYear() ? ` ${d.getFullYear()}` : '';
+  return `<div class="dayhead"><div class="row between"><span class="rel">${rel}</span>${n ? `<button class="link" data-act="day" data-k="${t}">Torna a oggi</button>` : ''}</div>
+    <h1>${wd[0].toUpperCase()}${wd.slice(1)} ${d.getDate()} ${E.MONTHS[d.getMonth()]}${year}</h1></div>`;
+}
 function calendarCard() {
   const t = today(), sel = ui.day || t;
   const days = E.strip(state, t, -15, 15);
-  const lbl = E.nextLabel(state, t);
-  const doneToday = state.sessions.some(s => s.date === t && !s.mini);
-  const m = E.parseDay(sel);
   return `<section class="card cal">
-    <div class="row between" style="align-items:flex-end"><div class="next">Prossimo allenamento<b>${doneToday && lbl === 'oggi' ? '—' : esc(lbl)}</b></div>
-      <span class="month" id="month">${E.MONTHS[m.getMonth()]} ${m.getFullYear()}</span></div>
     <div class="strip" id="strip">${days.map(x => {
       const st = x.frac != null ? lvOf(x.frac) : x.extra ? 'extra' : '';
       return `<button class="day ${st} ${x.rec ? 'rec' : ''} ${x.today ? 'today' : ''} ${x.key === sel ? 'sel' : ''}" data-act="day" data-k="${x.key}" data-m="${x.month}" data-y="${x.year}" aria-label="${dayLabel(x.key)}">${x.label}<i>${x.num}</i></button>`;
@@ -210,13 +214,7 @@ function placeStrip() {
   const st = document.getElementById('strip'); if (!st) return;
   if (ui.stripX != null) st.scrollLeft = ui.stripX;
   else { const el = st.querySelector('.sel') || st.querySelector('.today'); if (el) st.scrollLeft = el.offsetLeft - (st.clientWidth - el.offsetWidth) / 2; }
-  const month = () => {
-    const mid = st.scrollLeft + st.clientWidth / 2;
-    const b = [...st.children].find(x => x.offsetLeft + x.offsetWidth >= mid) || st.lastElementChild;
-    const lab = document.getElementById('month'); if (b && lab) lab.textContent = `${E.MONTHS[+b.dataset.m]} ${b.dataset.y}`;
-  };
-  month();
-  st.addEventListener('scroll', () => { ui.stripX = st.scrollLeft; month(); }, { passive: true });
+  st.addEventListener('scroll', () => { ui.stripX = st.scrollLeft; }, { passive: true });
 }
 
 function spark(values, h = 48) {
@@ -304,7 +302,7 @@ function viewOggi() {
   if (c?.view === 'ex' && c.items.length) return viewSession();
   let html = '';
   if (state.notice) html += `<section class="alert small">${esc(state.notice)} <button class="ghost" data-act="notice-ok">OK</button></section>`;
-  html += day === t ? `<h1>Oggi</h1>` : `<div class="row between"><h1>${dayLabel(day)}</h1><button class="ghost" data-act="day" data-k="${t}">Torna a oggi</button></div>`;
+  html += dayHead(day, t);
   html += calendarCard();
   if (day < t) return html + pastDay(day, c);
   if (day > t) return html + futureDay(day);
@@ -318,8 +316,9 @@ function viewOggi() {
   const rec = E.recommendedDays(state, t);
   const show = (c && (c.forced || hasLogs(c))) || rec[0] === t || todaySession();
   if (!show) {
+    const nx = E.nextLabel(state, t);
     html += `<section class="card"><h3>Oggi riposo</h3>
-      <p class="muted">Il recupero fa crescere il muscolo quanto l’allenamento.</p>
+      <p class="muted">${nx && nx !== 'oggi' ? `Prossimo allenamento ${esc(nx)}. ` : ''}Il recupero fa crescere il muscolo quanto l’allenamento.</p>
       <button style="margin-top:10px" data-act="force">Allenati comunque</button>
       <p class="small muted" style="margin-top:14px">Hai fatto un esercizio fuori programma, anche a casa?</p>
       <select data-in="free-add" style="margin-top:6px">${addOptions('+ Segna un esercizio')}</select></section>`;
@@ -950,6 +949,7 @@ function render() {
     cls = a == null && b != null ? 'enter-fwd' : a != null && b == null ? (key === 'oggi' ? 'enter-back' : 'enter-fade') : a != null && b != null ? (b > a ? 'enter-fwd' : 'enter-back') : 'enter-fade';
   }
   lastKey = key;
+  if (ui.dayAnim) { cls = ui.dayAnim === 'from-r' ? 'enter-fwd' : 'enter-back'; ui.dayAnim = null; }
   $('#view').innerHTML = `<div class="screen ${cls}">${VIEWS[ui.tab]()}</div>`;
   placeStrip();
   renderSheet();
@@ -1221,15 +1221,22 @@ document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && ui.sheet
 
 // Scorrimento orizzontale tra un esercizio e l'altro
 let touch = null;
+// In Oggi (fuori dalla seduta) lo stesso gesto cambia giorno: verso sinistra il giorno dopo, verso destra quello prima
 document.addEventListener('touchstart', ev => {
   const c = state.current;
-  touch = ui.tab === 'oggi' && c?.view === 'ex' && !ev.target.closest?.('input,select,.flip') && ev.touches.length === 1
-    ? { x: ev.touches[0].clientX, y: ev.touches[0].clientY, t: Date.now() } : null;
+  const inEx = c?.view === 'ex' && c.date === (ui.day || today());
+  touch = ui.tab === 'oggi' && !ui.sheet && !ev.target.closest?.('input,select,.flip,#strip') && ev.touches.length === 1
+    ? { x: ev.touches[0].clientX, y: ev.touches[0].clientY, t: Date.now(), ex: inEx } : null;
 }, { passive: true });
 document.addEventListener('touchend', ev => {
   if (!touch) return; const t = ev.changedTouches[0];
-  const dx = t.clientX - touch.x, dy = t.clientY - touch.y, fast = Date.now() - touch.t < 600; touch = null;
+  const dx = t.clientX - touch.x, dy = t.clientY - touch.y, fast = Date.now() - touch.t < 600, ex = touch.ex; touch = null;
   if (!fast || Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 2) return;
+  if (!ex) {
+    const k = E.addDays(ui.day || today(), dx < 0 ? 1 : -1);
+    if (Math.abs(E.diffDays(k, today())) > 15) return;   // come il calendario: 15 giorni avanti e indietro
+    ui.stripX = null; ui.dayAnim = dx < 0 ? 'from-r' : 'from-l'; return setDay(k);
+  }
   const c = state.current; const n = E.groupItems(c.items).length;
   if (dx < 0 && c.cur < n - 1) go(c.cur + 1); else if (dx > 0 && c.cur > 0) go(c.cur - 1); else if (dx > 0 && c.cur === 0) showList();
 }, { passive: true });
