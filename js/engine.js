@@ -25,7 +25,7 @@ export const round10 = x => Math.round(x / 10) * 10;
 // - ogni cambio di formato alza SCHEMA e aggiunge un passo in MIGRATIONS, che trasforma senza cancellare;
 // - gli id degli esercizi non si cancellano né si rinominano: un esercizio tolto diventa hidden: true;
 // - prima di ogni migrazione l'app salva una copia dei dati com'erano (vedi app.js, snapshot).
-export const SCHEMA = 3;
+export const SCHEMA = 4;
 
 export function initialState() {
   return {
@@ -61,7 +61,28 @@ const MIGRATIONS = {
     }
     return s;
   },
+  3: s => {   // 3 → 4: durata ricalcolata senza contare le serie corrette ore dopo (la seduta del 23/11 risultava di 797 min)
+    for (const ses of s.sessions || []) {
+      const all = (ses.items || []).flatMap(i => i.sets || []);
+      const ts = all.map(x => x.t).filter(t => t && dayKey(new Date(t)) === ses.date);
+      if (!ts.length) continue;
+      Object.assign(ses, spanOf(ts));
+      if (s.body) ses.kcal = kcalRange(s, ses.minutes, { superset: ses.items.some(i => i.ss), hard: all.filter(x => x.eff !== 'facile').length / all.length > 0.5 });
+    }
+    return s;
+  },
 };
+
+// Inizio, fine e minuti di una seduta dagli orari delle serie. Le pause oltre 45 minuti non contano:
+// una serie tolta e rimessa la sera (per correggerla) non allunga la seduta del mattino.
+const GAP = 45 * 60000;
+export function spanOf(ts) {
+  const t = [...ts].sort((a, b) => a - b);
+  let ms = 0, from = t[0];
+  for (let i = 1; i <= t.length; i++) if (i === t.length || t[i] - t[i - 1] > GAP) { ms += t[i - 1] - from; from = t[i]; }
+  const start = t[0] - 4 * 60000, minutes = Math.max(1, Math.round(ms / 60000) + 6);
+  return { start, end: start + minutes * 60000, minutes };
+}
 
 // Un esercizio presente nello storico ma non più nel catalogo resta leggibile (nome salvato con la seduta)
 function keepUnknown(s) {
@@ -883,7 +904,7 @@ export function recordDay(state, cur, now = Date.now()) {
     // orari: quelli delle serie segnate quel giorno; per un giorno passato segnato dopo, una stima
     const ts = all.map(x => x.t || now).filter(t => dayKey(new Date(t)) === cur.date);
     let start, end;
-    if (ts.length) { start = Math.min(...ts) - 4 * 60000; end = Math.max(...ts) + 2 * 60000; }
+    if (ts.length) ({ start, end } = spanOf(ts));
     else { start = parseDay(cur.date).getTime() + 18 * 36e5; end = start + Math.round(8 + nWork * 2.5 + items.filter(i => i.id === 'cardio' && i.sets.length).reduce((a, i) => a + (i.minutes || 0), 0)) * 60000; }
     const minutes = Math.max(1, Math.round((end - start) / 60000));
     const hard = all.filter(x => x.eff !== 'facile').length / all.length > 0.5;
