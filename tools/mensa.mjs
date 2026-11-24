@@ -86,10 +86,10 @@ function parseDish(html) {
   const text = decode(m ? m[1] : '').replace(/\s+/g, ' ').trim();
   const desc = (text.split(/INGREDIENTI|Porzione\s*:/i)[0] || '').replace(/^DESCRIZIONE\s*:\s*/i, '').trim();
   // due formati: "INGREDIENTI (GRAMMATURA ALIMENTI CRUDI) : Zucca 288 g; ..." oppure "Porzione : grammatura alimenti crudi Riso 70 g Tonno 40 g"
-  const ingPart = (text.split(/GRAMMATURA ALIMENTI CRUDI\)?\s*:?/i)[1] || '').split(/Porzione da|ALLERGENI|DICHIARAZIONE|\d+\s*kcal/i)[0];
+  const ingPart = (text.split(/INGREDIENTI[^:]*:|GRAMMATURA ALIMENTI CRUDI\)?\s*:?/i)[1] || '').split(/Porzione da|ALLERGENI|DICHIARAZIONE|\d+\s*kcal/i)[0];
   const portion = +(text.match(/Porzione da\s*([\d.,]+)\s*g/i)?.[1] || '0').replace(',', '.');
   const ing = [];
-  for (const mm of ingPart.matchAll(/([^;\d]+?)\s+(\d+(?:[.,]\d+)?)\s*g\b/gi)) {
+  for (const mm of ingPart.matchAll(/((?:[^;\d]|\d(?![\d.,]*\s*g\b))+?)\s+(\d+(?:[.,]\d+)?)\s*g\b/gi)) {
     const name = mm[1].replace(/^[\s.:;,]+|[\s.:;,]+$/g, '').trim();
     if (name && !/^q\.?b/i.test(name)) ing.push({ name, g: +mm[2].replace(',', '.') });
   }
@@ -124,6 +124,7 @@ const file = new URL('../mensa.json', import.meta.url);
 const old = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null;
 const same = old && JSON.stringify(old.dishes) === JSON.stringify(dishes);
 out.updated = same ? old.updated : new Date().toISOString();
+out.checked = new Date().toISOString();   // l'app mostra il menu solo se letto da poco
 writeFileSync(file, JSON.stringify(out, null, 1) + '\n');
 console.log(same ? 'Menu invariato' : 'Menu aggiornato');
 for (const d of dishes) console.log(`${d.name} · ${d.kcal} kcal · P ${d.p} · C ${d.c} · G ${d.f}${d.unknown.length ? ' · sconosciuti: ' + d.unknown.join(', ') : ''}`);
