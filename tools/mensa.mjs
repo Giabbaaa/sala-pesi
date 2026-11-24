@@ -61,8 +61,17 @@ const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').repla
 const decode = s => s.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n)).replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
   .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&euro;/g, '€').replace(/&([a-z])grave;/gi, '$1')
   .replace(/&([a-z])acute;/gi, '$1').replace(/&[a-z]+;/gi, ' ');
-// l'alimento con il nome più lungo contenuto nell'ingrediente ("panino al latte" batte "latte")
-const food = name => { const n = norm(name); return FOODS.filter(f => n.includes(f[0])).sort((a, b) => b[0].length - a[0].length)[0] || null; };
+// Alimenti riconosciuti in un ingrediente, in ordine di posizione: a parità di posizione vince il nome più lungo
+// ("panino al latte" batte "latte"). "Spinaci con burro e parmigiano": spinaci 85%, il resto si divide il 15%.
+function parts(name) {
+  const n = norm(name);
+  const hits = FOODS.map(f => ({ f, at: n.indexOf(f[0]) })).filter(h => h.at >= 0).sort((a, b) => a.at - b.at || b.f[0].length - a.f[0].length);
+  const out = [];
+  for (const h of hits) if (!out.some(o => h.at < o.at + o.f[0].length && o.at < h.at + h.f[0].length)) out.push(h);
+  if (!out.length) return [];
+  if (out.length === 1 || !/ con /.test(' ' + n + ' ')) return [{ v: out[0].f, w: 1 }];
+  return out.map((h, i) => ({ v: h.f, w: i ? 0.15 / (out.length - 1) : 0.85 }));
+}
 
 async function get(url) {
   for (let i = 0; i < 3; i++) {
@@ -75,26 +84,29 @@ async function get(url) {
 function parseDish(html) {
   const m = html.match(/<meta name="description" content="([^"]*)"/);
   const text = decode(m ? m[1] : '').replace(/\s+/g, ' ').trim();
-  const desc = (text.split(/INGREDIENTI/i)[0] || '').replace(/^DESCRIZIONE\s*:\s*/i, '').trim();
-  const ingPart = (text.split(/INGREDIENTI[^:]*:/i)[1] || '').split(/Porzione da|ALLERGENI/i)[0];
+  const desc = (text.split(/INGREDIENTI|Porzione\s*:/i)[0] || '').replace(/^DESCRIZIONE\s*:\s*/i, '').trim();
+  // due formati: "INGREDIENTI (GRAMMATURA ALIMENTI CRUDI) : Zucca 288 g; ..." oppure "Porzione : grammatura alimenti crudi Riso 70 g Tonno 40 g"
+  const ingPart = (text.split(/GRAMMATURA ALIMENTI CRUDI\)?\s*:?/i)[1] || '').split(/Porzione da|ALLERGENI|DICHIARAZIONE|\d+\s*kcal/i)[0];
   const portion = +(text.match(/Porzione da\s*([\d.,]+)\s*g/i)?.[1] || '0').replace(',', '.');
   const ing = [];
-  for (const part of ingPart.split(';')) {
-    const mm = part.trim().match(/^(.*?)\s+([\d.,]+)\s*g\b/i);
-    if (!mm) continue;
-    ing.push({ name: mm[1].trim(), g: +mm[2].replace(',', '.') });
+  for (const mm of ingPart.matchAll(/([^;\d]+?)\s+(\d+(?:[.,]\d+)?)\s*g\b/gi)) {
+    const name = mm[1].replace(/^[\s.:;,]+|[\s.:;,]+$/g, '').trim();
+    if (name && !/^q\.?b/i.test(name)) ing.push({ name, g: +mm[2].replace(',', '.') });
   }
-  return { desc, portion, ing };
+  // a volte il sito dà le calorie della porzione ("460 kcal 1942 kj"): più affidabili della stima
+  const kcal = +(text.match(/(\d{2,4})\s*kcal\s*\d+\s*kj/i)?.[1] || 0);
+  return { desc, portion, ing, kcal };
 }
 
 function estimate(ing) {
   let k = 0, p = 0, c = 0, f = 0; const unknown = [];
   for (const x of ing) {
-    const v = food(x.name) || (unknown.push(x.name), [null, ...FALLBACK]);
-    k += v[1] * x.g / 100; p += v[2] * x.g / 100; c += v[3] * x.g / 100; f += v[4] * x.g / 100;
+    let ps = parts(x.name);
+    if (!ps.length) { unknown.push(x.name); ps = [{ v: [null, ...FALLBACK], w: 1 }]; }
+    for (const { v, w } of ps) { const g = x.g * w / 100; k += v[1] * g; p += v[2] * g; c += v[3] * g; f += v[4] * g; }
   }
   const r = n => Math.round(n);
-  return { kcal: Math.round(k / 10) * 10, p: r(p), c: r(c), f: r(f), unknown };
+  return { kcal: Math.round(k / 10) * 10, p: r(p), c: r(c), f: r(f), unknown, ok: ing.length > 0 };
 }
 
 const menu = await get(MENU);
@@ -104,6 +116,7 @@ const dishes = [];
 for (const [, href, id, name, price] of cards) {
   const d = parseDish(await get(BASE + href));
   const e = estimate(d.ing);
+  if (d.kcal) e.kcal = d.kcal;
   dishes.push({ id: +id, name: decode(name).trim(), price: decode(price).trim(), url: BASE + href, desc: d.desc, portion: d.portion, ...e, ing: d.ing });
 }
 const out = { source: MENU, dishes };
