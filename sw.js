@@ -1,5 +1,5 @@
 // Service worker: tutto in cache per funzionare offline in palestra.
-const VERSION = 'v1.14';
+const VERSION = 'v1.15';
 const ASSETS = [
 "./",
 "index.html",
@@ -9,6 +9,7 @@ const ASSETS = [
 "js/catalog.js",
 "fonts/unbounded-700.woff2",
 "js/sync.js",
+"js/meals.js",
 "manifest.webmanifest",
 "icons/apple-touch-icon.png",
 "icons/icon-192.png",

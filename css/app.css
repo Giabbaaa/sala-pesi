@@ -420,8 +420,14 @@ button.back { padding: 4px 2px; font-weight: 600; }
 .menu-card button.danger { color: var(--bad); font-weight: 600; }
 
 /* Mensa */
-.mensa { margin: 4px 0 12px; padding: 10px 12px; border-radius: 12px; background: var(--card2, rgba(127,127,127,.08)); }
-.mensa .link { margin-top: 4px; padding: 0; }
 .mensa-list { margin-top: 10px; display: grid; gap: 8px; max-height: 60vh; overflow: auto; }
 .mensa-row { padding: 8px 0; border-bottom: 1px solid var(--line, rgba(127,127,127,.2)); }
 .mensa-row:last-child { border-bottom: 0; }
+
+/* Menu del giorno */
+.meals { margin-top: 12px; border-top: 1px solid var(--line); }
+.meal { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.meal:last-child { border-bottom: 0; }
+.meal .small:not(.muted):not(.t-ok) { margin-top: 2px; line-height: 1.35; }
+.meal-acts { margin-top: 8px; align-items: center; }
+.meal-acts .link { margin-left: 6px; }

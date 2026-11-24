@@ -25,7 +25,7 @@ export const round10 = x => Math.round(x / 10) * 10;
 // - ogni cambio di formato alza SCHEMA e aggiunge un passo in MIGRATIONS, che trasforma senza cancellare;
 // - gli id degli esercizi non si cancellano né si rinominano: un esercizio tolto diventa hidden: true;
 // - prima di ogni migrazione l'app salva una copia dei dati com'erano (vedi app.js, snapshot).
-export const SCHEMA = 5;
+export const SCHEMA = 6;
 
 export function initialState() {
   return {
@@ -45,6 +45,7 @@ export function initialState() {
     cycle: { n: 1, level: 0, startCount: 0, length: 16, deloadLeft: 0, goal: 'Chest press da 55 a 60 kg × 10 · peso medio −3 kg', history: [] },
     body: { weights: [], waist: [] },
     nutrition: { kcal: 1850, protein: 170, fat: 60, last: '', lastAdj: null, proteinBaseWeight: null },
+    meals: { alt: {}, where: {}, ordered: {} },   // menu del giorno: altre proposte, mensa o casa, piatto ordinato (per giorno)
   };
 }
 
@@ -71,7 +72,11 @@ const MIGRATIONS = {
       if (s.body) ses.kcal = kcalRange(s, ses.minutes, { superset: ses.items.some(i => i.ss), hard: all.filter(x => x.eff !== 'facile').length / all.length > 0.5 });
     }
     return s;
-  },  4: s => {   // 4 → 5: calorie dinamiche (PT 24/11): kcal diventa la base del giorno di riposo, l'allenamento aggiunge la sua quota
+  },  5: s => {   // 5 → 6: menu del giorno (nuovo, vuoto)
+    s.meals = s.meals || { alt: {}, where: {}, ordered: {} };
+    return s;
+  },
+  4: s => {   // 4 → 5: calorie dinamiche (PT 24/11): kcal diventa la base del giorno di riposo, l'allenamento aggiunge la sua quota
     const n = s.nutrition;
     if (n) {
       n.kcal = n.lastAdj ? Math.max(1700, (n.kcal || 2150) - 300) : 1850;
@@ -120,6 +125,7 @@ export function migrate(s) {
   out.cycle = { ...base.cycle, ...(s.cycle || {}) };
   out.body = { ...base.body, ...(s.body || {}) };
   out.nutrition = { ...base.nutrition, ...(s.nutrition || {}) };
+  out.meals = { ...base.meals, ...(s.meals || {}) };
   out.sessions = Array.isArray(s.sessions) ? s.sessions : [];
   return out;
 }

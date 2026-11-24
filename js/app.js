@@ -1,6 +1,7 @@
 import { EX, EXERCISES, MUSCLES, MUSCLE_ORDER, TYPE_RULES, EQUIP_GROUPS, imgs } from './catalog.js';
 import * as E from './engine.js';
 import * as G from './sync.js';
+import * as M from './meals.js';
 
 // La chiave resta questa per sempre: la versione del formato è dentro i dati (state.v, vedi engine.SCHEMA)
 const KEY = 'salapesi.v1';
@@ -402,7 +403,7 @@ function futureDay(k) {
   const t = today();
   const plan = state.current?.date === t && !hasLogs(state.current) ? state.current : null;
   let f = null; try { f = E.forecast(state, k, plan, t); } catch { f = null; }
-  if (!f) return `<section class="card"><h3>Riposo</h3><p class="muted">${(state.settings.days || []).length ? 'Non è tra i giorni in cui pensi di andare (li scegli in Piano → Ritmo).' : 'Non è tra i giorni consigliati.'}</p></section>`;
+  if (!f) return `<section class="card"><h3>Riposo</h3><p class="muted">${(state.settings.days || []).length ? 'Non è tra i giorni in cui pensi di andare (li scegli in Piano → Ritmo).' : 'Non è tra i giorni consigliati.'}</p></section>` + nutriCard(k);
   const work = f.items.filter(i => i.id !== 'cardio');
   return `<section class="card"><h3 class="t-bad">Allenamento previsto${f.deload ? ' · scarico' : ''}</h3>
     <p class="reason">${esc(f.reason)}</p>
@@ -410,7 +411,7 @@ function futureDay(k) {
     ${f.items.map(it => it.id === 'cardio'
       ? `<div class="hist-row"><b><span class="cardio-ico">🚴</span>Cardio extra</b><span class="small muted">${it.minutes} min</span></div>`
       : `<div class="hist-row"><b>${esc(EX[it.id].name)}</b><span class="small muted">${it.planSets} × ${rangeLabel(it.id)} · ${loadLabel(it.id, it.kg)}</span></div>`).join('')}
-    <p class="small muted" style="margin-top:10px">È una previsione: l’app la ricalcola in base a quello che farai prima.</p></section>`;
+    <p class="small muted" style="margin-top:10px">È una previsione: l’app la ricalcola in base a quello che farai prima.</p></section>` + nutriCard(k);
 }
 
 // ---------- Copia su GitHub ----------
@@ -930,29 +931,48 @@ function viewProgressi() {
 
 // ---------- ALIMENTAZIONE ----------
 // Obiettivi del giorno, dinamici: base del riposo + quota della seduta (prevista o fatta). Mostrati in fondo a Oggi.
-function nutriCard(t) {
-  const n = state.nutrition, c = state.current, rec = E.recommendedDays(state, t);
+function dayNut(t) {
+  const now = today();
+  if (t > now) {   // giorno futuro: la seduta prevista dal calendario
+    const plan = state.current?.date === now && !hasLogs(state.current) ? state.current : null;
+    let f = null; try { f = E.forecast(state, t, plan, now); } catch { f = null; }
+    return E.dayNutrition(state, t, f ? f.minutes : 0);
+  }
+  const c = state.current, rec = E.recommendedDays(state, t);
   const cur = c?.date === t ? c : null;
   const planned = !hasLogs(cur) && ((cur && cur.forced) || (rec[0] === t && state.skipDay !== t)) ? (cur?.minutes || E.usualMinutes(state)) : 0;
-  const d = E.dayNutrition(state, t, planned);
+  return E.dayNutrition(state, t, planned);
+}
+// Menu del giorno (da oggi in avanti): tutto il giorno, seduta prevista compresa
+function menuFor(t, d = dayNut(t)) {
+  const n = state.nutrition;
+  return M.dayMenu(state, t, { kcal: d.status === 'riposo' ? d.base : d.total, protein: n.protein, fat: n.fat, training: d.status !== 'riposo' }, mensa);
+}
+function menuHtml(t, d) {
+  const r = menuFor(t, d);
+  const row = x => {
+    const text = x.text ? esc(x.text) : x.items.map(M.itemText).map(esc).join(' + ');
+    const tag = x.mensa ? ' <span class="small t-ok">mensa</span>' : x.out ? ' <span class="small muted">fuori</span>' : '';
+    return `<div class="meal" data-lp="meal" data-meal="${x.key}" data-day="${t}">
+      <div class="row between"><b>${x.label}${tag}</b><span class="small muted">${x.v[0]} kcal · ${x.v[1]} g</span></div>
+      <div class="small">${text}</div>
+      ${x.mensa ? `<div class="chips meal-acts">${x.ordered ? `<button class="on" data-act="meal-order" data-day="${t}">✓ Ordinato</button>` : `<button data-act="meal-order" data-day="${t}">Ordinato</button>`}
+        <button class="link small" data-act="mensa-open">Menu della settimana</button></div>` : ''}
+    </div>`;
+  };
+  return `<div class="meals">${r.meals.map(row).join('')}</div>
+    <p class="small muted" style="margin-top:8px">In tutto circa ${thousands(Math.round(r.total[0] / 10) * 10)} kcal e ${r.total[1]} g di proteine. Tieni premuto un pasto per cambiarlo.</p>`;
+}
+function nutriCard(t) {
+  const n = state.nutrition, d = dayNut(t);
   const kc = d.status === 'fatto' ? d.total : d.base;
-  return `<section class="card nutri"><h3>Alimentazione</h3>${mensaLine(t, d.status !== 'riposo')}
+  return `<section class="card nutri"><h3>Alimentazione</h3>
     <div class="summary"><span><b>${thousands(kc)}</b> kcal</span><span><b>${n.protein}</b> g proteine</span><span><b>${d.carbsBase + (d.status === 'fatto' ? d.carbsExtra : 0)}</b> g carbo</span><span><b>${n.fat}</b> g grassi</span></div>
     <p class="small muted">${d.status === 'fatto' ? `${thousands(d.base)} di base + ${d.extra} kcal dell’allenamento, in carboidrati.`
       : d.status === 'previsto' ? `<b class="t-ok">+ ${d.extra} kcal dopo l’allenamento</b>, circa ${d.carbsExtra} g di carboidrati. Se salti la seduta, non servono.` : 'Giorno di riposo: solo la base.'}</p>
+    ${t >= today() ? menuHtml(t, d) : ''}
     ${n.last ? `<p class="small" style="margin-top:6px"><b>Ultima modifica:</b> ${esc(n.last)}</p>` : ''}
   </section>`;
-}
-// Consiglio per il pranzo in mensa, nei giorni d'ufficio della settimana del menu
-function mensaLine(t, training) {
-  const m = E.mensaFor(mensa, t);
-  if (!m || !E.isOfficeDay(state, t)) return '';
-  const [a, b] = E.mensaRank(m, training);
-  if (!a) return '';
-  const info = x => `${x.kcal} kcal · ${x.p} g proteine`;
-  return `<div class="mensa"><div><span class="muted">Mensa:</span> ordina <b>${esc(a.name)}</b></div>
-    <div class="small muted">${info(a)}${b ? ` · oppure ${esc(b.name)}, ${info(b)}` : ''}</div>
-    <button class="link small" data-act="mensa-open">Menu della settimana</button></div>`;
 }
 function mensaSheet() {
   const m = mensa, rank = d => ({ ottimo: 0, buono: 1, 'da evitare': 2 })[E.mensaGrade(d)] ?? 3,
@@ -996,7 +1016,7 @@ function viewImpostazioni() {
     ${soundMode() === 'off' ? '' : '<button class="ghost" style="align-self:flex-start" data-act="sound-test">▶︎ Prova il suono</button>'}
   </section>
   <h2>Giorni in mensa</h2><section class="card"><div class="chips">${[1, 2, 3, 4, 5].map(v => `<button class="${(s.office || [1, 2, 3, 4, 5]).includes(v) ? 'on' : ''}" data-act="office" data-v="${v}">${E.DAY_NAMES[v].slice(0, 3)}</button>`).join('')}</div>
-    <p class="small muted" style="margin-top:8px">In questi giorni Oggi ti consiglia cosa ordinare dal menu Nutreetion Lab.</p></section>
+    <p class="small muted" style="margin-top:8px">In questi giorni il pranzo proposto è quello della mensa Nutreetion Lab. Per un giorno diverso tieni premuto il pranzo.</p></section>
   <h2>Dischi disponibili</h2><section class="card"><div class="chips">${[25, 20, 15, 10, 5, 2.5, 1.25].map(p => `<button class="${s.plates.includes(p) ? 'on' : ''}" data-act="plate" data-v="${p}">${kg(p)} kg</button>`).join('')}</div>
     <p class="small muted" style="margin-top:8px">Per gli attrezzi a dischi l’app ti dice cosa mettere per lato.</p></section>
   <h2>Dati e backup</h2><section class="card stack">
@@ -1008,7 +1028,7 @@ function viewImpostazioni() {
         <button class="ghost" data-act="snap" data-k="${x.k}">${ui.confirmSnap === x.k ? 'Conferma' : 'Ripristina'}</button></div>`; }).join('')}` : ''}
     <button class="danger" style="margin-top:14px" data-act="reset">${ui.confirmReset ? 'Tocca di nuovo per cancellare tutto' : 'Cancella tutti i dati'}</button>
   </section>
-  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.14 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.15 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
 }
 
 // ---------- Render ----------
@@ -1229,6 +1249,17 @@ document.addEventListener('click', ev => {
     }
     case 'fretta-open': ui.sheet = 'fretta'; return renderSheet();
     case 'mensa-open': ui.sheet = 'mensa'; return renderSheet();
+    case 'meal-alt': case 'meal-plus': case 'meal-where': case 'meal-order': {
+      const t = el.dataset.day, m = state.meals, alt = (m.alt[t] = m.alt[t] || {});
+      if (a === 'meal-alt') alt[el.dataset.meal] = (alt[el.dataset.meal] || 0) + 1;
+      if (a === 'meal-plus') alt.colazione = +el.dataset.v;
+      if (a === 'meal-where') { m.where[t] = el.dataset.v; delete alt.pranzo; }
+      if (a === 'meal-order') {
+        if (m.ordered[t]) delete m.ordered[t];
+        else { const p = menuFor(t).meals.find(x => x.key === 'pranzo'); if (!p?.dish) return; const { id, name, kcal, p: pr, c: cb, f } = p.dish; m.ordered[t] = { id, name, kcal, p: pr, c: cb, f }; m.where[t] = 'mensa'; }
+      }
+      save(); return render();
+    }
     case 'office': { const v = +el.dataset.v, o = state.settings.office || [1, 2, 3, 4, 5]; state.settings.office = o.includes(v) ? o.filter(x => x !== v) : [...o, v].sort(); return rerender(); }
     case 'fretta': {
       closeSheet(); if (!c) return;
@@ -1429,6 +1460,17 @@ function lpMenu(el) {
       if (x.plates || state.settings.ex[it.id]?.plates === false) items.push({ act: 'lp-plates', label: x.plates ? `Dischi · peso a vuoto ${kg(x.base)} kg` : 'Dischi · non usati', attrs: `data-id="${it.id}"` });
     }
     if (!logged(it).length) items.push({ act: 'ov-del', label: 'Togli dalla seduta', danger: true, attrs: `data-i="${el.dataset.i}"` });
+  } else if (k === 'meal') {
+    const t = el.dataset.day, key = el.dataset.meal, r = menuFor(t), x = r.meals.find(m => m.key === key); if (!x) return false;
+    const at = `data-day="${t}" data-meal="${key}"`;
+    title = x.label;
+    if (key === 'colazione') items.push({ act: 'meal-plus', label: x.items.length > 3 ? 'Colazione semplice' : 'Colazione rinforzata (+ 15 g di whey)', attrs: `${at} data-v="${x.items.length > 3 ? 0 : 1}"` });
+    else if (!x.ordered) items.push({ act: 'meal-alt', label: 'Un’altra proposta', attrs: at });
+    if (key === 'pranzo') {
+      if (x.ordered) items.push({ act: 'meal-order', label: 'Non l’ho ordinato', attrs: at });
+      else if (x.mensa) items.push({ act: 'meal-where', label: 'Pranzo a casa o fuori', attrs: `${at} data-v="casa"` });
+      else if (r.hasMensa) items.push({ act: 'meal-where', label: 'Pranzo in mensa', attrs: `${at} data-v="mensa"` });
+    }
   } else if (k === 'plan') {
     if (!c) return false;
     const isToday = c.date === today();
@@ -1517,6 +1559,7 @@ for (const type of ['touchend', 'touchcancel']) document.addEventListener(type, 
   if (c && hasLogs(c)) E.recordDay(state, c);                       // tutto ciò che è segnato è salvato
   if (c && c.date !== today()) { state.current = state.stash?.date === today() ? state.stash : null; state.stash = null; state.rest = null; }
   delete state.lastSummary;
+  M.pruneMeals(state, today());
   // copia automatica del giorno (dei dati come erano all'apertura)
   const t = today();
   if (rawAtStart && state.sessions.length && !snapList().some(x => x.why === 'automatica' && E.dayKey(new Date(x.at)) === t)) snapshot(rawAtStart, 'automatica');
