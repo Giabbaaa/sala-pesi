@@ -350,10 +350,10 @@ function dayBody(t, day, c) {
       <button style="margin-top:10px" data-act="force">Allenati comunque</button>
       <p class="small muted" style="margin-top:14px">Hai fatto un esercizio fuori programma, anche a casa?</p>
       <select data-in="free-add" style="margin-top:6px">${addOptions('+ Segna un esercizio')}</select></section>`;
-    return html;
+    return html + nutriCard(t);
   }
   ensureCurrent();
-  return html + dayCard(state.current) + overview(state.current) + backupReminder();
+  return html + dayCard(state.current) + overview(state.current) + nutriCard(t) + backupReminder();
 }
 
 // Giorno passato: quello che è stato fatto (con cestino e modifica), oppure la giornata vuota per segnare qualcosa
@@ -911,20 +911,28 @@ function viewProgressi() {
 }
 
 // ---------- ALIMENTAZIONE ----------
+// Obiettivi del giorno, dinamici: base del riposo + quota della seduta (prevista o fatta). Mostrati in fondo a Oggi.
+function nutriCard(t) {
+  const n = state.nutrition, c = state.current, rec = E.recommendedDays(state, t);
+  const cur = c?.date === t ? c : null;
+  const planned = !hasLogs(cur) && ((cur && cur.forced) || (rec[0] === t && state.skipDay !== t)) ? (cur?.minutes || E.usualMinutes(state)) : 0;
+  const d = E.dayNutrition(state, t, planned);
+  const kc = d.status === 'fatto' ? d.total : d.base;
+  return `<section class="card nutri"><h3>Alimentazione</h3>
+    <div class="summary"><span><b>${thousands(kc)}</b> kcal</span><span><b>${n.protein}</b> g proteine</span><span><b>${d.carbsBase + (d.status === 'fatto' ? d.carbsExtra : 0)}</b> g carbo</span><span><b>${n.fat}</b> g grassi</span></div>
+    <p class="small muted">${d.status === 'fatto' ? `${thousands(d.base)} di base + ${d.extra} kcal dell’allenamento, in carboidrati.`
+      : d.status === 'previsto' ? `<b class="t-ok">+ ${d.extra} kcal dopo l’allenamento</b>, circa ${d.carbsExtra} g di carboidrati. Se salti la seduta, non servono.` : 'Giorno di riposo: solo la base.'}</p>
+    ${n.last ? `<p class="small" style="margin-top:6px"><b>Ultima modifica:</b> ${esc(n.last)}</p>` : ''}
+  </section>`;
+}
 function viewCibo() {
   const n = state.nutrition; const w = state.body.weights; const t = today();
   const avg = w.length ? E.weightAvg(state, w[w.length - 1].date) : null;
   const avgOld = w.length ? E.weightAvg(state, E.addDays(w[w.length - 1].date, -7)) : null;
   const todayW = w.find(x => x.date === t);
   return `<h1>Alimentazione</h1>
-  <p class="muted">Livelli da tenere ogni giorno, allenamento o riposo. I pasti si registrano in Yazio.</p>
-  <section class="card">
-    <div class="kv"><span>Calorie</span><b>${thousands(n.kcal)} kcal</b></div>
-    <div class="kv"><span>Proteine</span><b>${n.protein} g</b><span class="small muted" style="grid-column:1/-1">circa ${Math.round(n.protein / 4 / 5) * 5} g in 4 pasti</span></div>
-    <div class="kv"><span>Grassi</span><b>almeno ${n.fat} g</b></div>
-    <div class="kv"><span>Carboidrati</span><b>circa ${E.carbs(n)} g</b></div>
-  </section>
-  ${n.last ? `<section class="alert small"><b>Ultima modifica:</b> ${esc(n.last)}</section>` : ''}
+  <p class="muted">Nei giorni di riposo la base; quando ti alleni si aggiunge la quota della seduta, tutta in carboidrati. I pasti si registrano in Yazio.</p>
+  ${nutriCard(t)}
   <h2>Peso</h2><section class="card">
     <div class="row"><span class="grow">Peso di stamattina, a digiuno</span><input style="width:110px" type="text" inputmode="decimal" placeholder="${todayW ? kg(todayW.kg) : 'kg'}" data-in="weight"></div>
     ${avg != null ? `<div class="kv" style="margin-top:8px"><span>Media 7 giorni</span><b>${kg(Math.round(avg * 10) / 10)} kg</b>
@@ -957,7 +965,7 @@ function viewImpostazioni() {
         <button class="ghost" data-act="snap" data-k="${x.k}">${ui.confirmSnap === x.k ? 'Conferma' : 'Ripristina'}</button></div>`; }).join('')}` : ''}
     <button class="danger" style="margin-top:14px" data-act="reset">${ui.confirmReset ? 'Tocca di nuovo per cancellare tutto' : 'Cancella tutti i dati'}</button>
   </section>
-  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.12 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.13 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
 }
 
 // ---------- Render ----------

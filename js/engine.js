@@ -25,7 +25,7 @@ export const round10 = x => Math.round(x / 10) * 10;
 // - ogni cambio di formato alza SCHEMA e aggiunge un passo in MIGRATIONS, che trasforma senza cancellare;
 // - gli id degli esercizi non si cancellano né si rinominano: un esercizio tolto diventa hidden: true;
 // - prima di ogni migrazione l'app salva una copia dei dati com'erano (vedi app.js, snapshot).
-export const SCHEMA = 4;
+export const SCHEMA = 5;
 
 export function initialState() {
   return {
@@ -43,7 +43,7 @@ export function initialState() {
     current: null,
     cycle: { n: 1, level: 0, startCount: 0, length: 16, deloadLeft: 0, goal: 'Chest press da 55 a 60 kg × 10 · peso medio −3 kg', history: [] },
     body: { weights: [], waist: [] },
-    nutrition: { kcal: 2150, protein: 160, fat: 60, last: '', lastAdj: null, proteinBaseWeight: null },
+    nutrition: { kcal: 1850, protein: 170, fat: 60, last: '', lastAdj: null, proteinBaseWeight: null },
   };
 }
 
@@ -70,7 +70,15 @@ const MIGRATIONS = {
       if (s.body) ses.kcal = kcalRange(s, ses.minutes, { superset: ses.items.some(i => i.ss), hard: all.filter(x => x.eff !== 'facile').length / all.length > 0.5 });
     }
     return s;
+  },  4: s => {   // 4 → 5: calorie dinamiche (PT 24/11): kcal diventa la base del giorno di riposo, l'allenamento aggiunge la sua quota
+    const n = s.nutrition;
+    if (n) {
+      n.kcal = n.lastAdj ? Math.max(1700, (n.kcal || 2150) - 300) : 1850;
+      if (!n.proteinBaseWeight && (n.protein == null || n.protein === 160)) n.protein = 170;
+    }
+    return s;
   },
+
 };
 
 // Inizio, fine e minuti di una seduta dagli orari delle serie. Le pause oltre 45 minuti non contano:
@@ -1025,7 +1033,27 @@ export function nutritionCheck(state, today = dayKey()) {
   if (perWeek < 0.4) { n.kcal = Math.max(1700, n.kcal - 150); n.last = `calorie −150 il ${when}: calo più lento del previsto · aggiorna anche Yazio`; n.lastAdj = today; }
   else if (perWeek > 1) { n.kcal += 150; n.last = `calorie +150 il ${when}: calo troppo veloce · aggiorna anche Yazio`; n.lastAdj = today; }
   const base = n.proteinBaseWeight ?? 87;
-  if (Math.abs(nowAvg - base) > 3) { n.protein = Math.round(nowAvg * 1.85 / 5) * 5; n.proteinBaseWeight = nowAvg; }
+  if (Math.abs(nowAvg - base) > 3) { n.protein = Math.round(nowAvg * 2 / 5) * 5; n.proteinBaseWeight = nowAvg; }
+}
+
+// Quota dell'allenamento: consumo netto della seduta, (MET − 1) × peso × ore, col MET medio di kcalRange. Tutta in carboidrati.
+export function trainingKcal(state, minutes, { superset = false, hard = true } = {}) {
+  if (!minutes) return 0;
+  const hi = hard ? 6.0 : superset ? 5.8 : 5.0;
+  return round10(((3.5 + hi) / 2 - 1) * bodyWeight(state) * minutes / 60);
+}
+// Calorie del giorno: base (riposo) + quota della seduta. Seduta registrata: quota sulla durata reale.
+// Seduta prevista e non ancora fatta (plannedMinutes dall'app): quota stimata "dopo l'allenamento". Altrimenti solo la base.
+export function dayNutrition(state, day = dayKey(), plannedMinutes = 0) {
+  const n = state.nutrition;
+  const s = state.sessions.find(x => x.date === day && x.items?.some(i => (i.sets || []).length));
+  let extra = 0, status = 'riposo';
+  if (s) {
+    const all = s.items.flatMap(i => i.sets || []);
+    extra = trainingKcal(state, s.minutes, { superset: s.items.some(i => i.ss), hard: all.filter(x => x.eff !== 'facile').length / Math.max(1, all.length) > 0.5 });
+    status = 'fatto';
+  } else if (plannedMinutes) { extra = trainingKcal(state, plannedMinutes); status = 'previsto'; }
+  return { base: n.kcal, extra, total: n.kcal + extra, status, carbsBase: carbs(n), carbsExtra: Math.round(extra / 4 / 5) * 5 };
 }
 
 export const carbs = n => Math.max(0, Math.round((n.kcal - n.protein * 4 - n.fat * 9) / 4 / 10) * 10);
