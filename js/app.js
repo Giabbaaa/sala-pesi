@@ -948,8 +948,7 @@ function menuFor(t, d = dayNut(t)) {
   const n = state.nutrition;
   return M.dayMenu(state, t, { kcal: d.status === 'riposo' ? d.base : d.total, protein: n.protein, fat: n.fat, training: d.status !== 'riposo' }, mensa);
 }
-function menuHtml(t, d) {
-  const r = menuFor(t, d);
+function menuHtml(t, r) {
   const row = x => {
     const text = x.choose ? `<button class="link" data-act="meal-choose" data-day="${t}" data-meal="${x.key}">Scegli</button>`
       : x.text ? esc(x.text) : x.items.map(M.itemText).map(esc).join(' + ');
@@ -959,8 +958,7 @@ function menuHtml(t, d) {
       <div class="small">${text}</div>
     </div>`;
   };
-  return `<div class="meals">${r.meals.map(row).join('')}</div>
-    <p class="small muted" style="margin-top:8px">In tutto circa ${thousands(Math.round(r.total[0] / 10) * 10)} kcal e ${r.total[1]} g di proteine. Tieni premuto un pasto per sceglierlo dalla lista.</p>`;
+  return `<div class="meals">${r.meals.map(row).join('')}</div>`;
 }
 // Lista delle possibilità di un pasto: tocco per scegliere, tocco di nuovo sulla stessa per togliere la scelta
 function chooseSheet() {
@@ -980,13 +978,20 @@ function chooseSheet() {
     </div>`;
 }
 function nutriCard(t) {
-  const n = state.nutrition, d = dayNut(t);
-  const kc = d.status === 'fatto' ? d.total : d.base;
+  const n = state.nutrition, d = dayNut(t), train = d.status !== 'riposo';
+  // obiettivi del giorno (con la quota dell'allenamento, se c'è) e, da oggi in avanti, quanto fa il menu
+  const goal = [train ? d.total : d.base, n.protein, d.carbsBase + (train ? d.carbsExtra : 0), n.fat];
+  const r = t >= today() ? menuFor(t, d) : null;
+  const cell = (i, label) => {
+    if (!r) return `<span><b>${thousands(goal[i])}</b> ${label}</span>`;
+    const v = r.total[i], off = Math.abs(v - goal[i]) / goal[i] > 0.1;
+    return `<span><b${off ? ' class="t-warn"' : ''}>${thousands(i ? v : Math.round(v / 10) * 10)}<small>/${thousands(goal[i])}</small></b> ${label}</span>`;
+  };
   return `<section class="card nutri"><h3>Alimentazione</h3>
-    <div class="summary"><span><b>${thousands(kc)}</b> kcal</span><span><b>${n.protein}</b> g proteine</span><span><b>${d.carbsBase + (d.status === 'fatto' ? d.carbsExtra : 0)}</b> g carbo</span><span><b>${n.fat}</b> g grassi</span></div>
+    <div class="summary${r ? ' goal' : ''}">${cell(0, 'kcal')}${cell(1, 'g proteine')}${cell(2, 'g carbo')}${cell(3, 'g grassi')}</div>
     <p class="small muted">${d.status === 'fatto' ? `${thousands(d.base)} di base + ${d.extra} kcal dell’allenamento, in carboidrati.`
-      : d.status === 'previsto' ? `<b class="t-ok">+ ${d.extra} kcal dopo l’allenamento</b>, circa ${d.carbsExtra} g di carboidrati. Se salti la seduta, non servono.` : 'Giorno di riposo: solo la base.'}</p>
-    ${t >= today() ? menuHtml(t, d) : ''}
+      : d.status === 'previsto' ? `Comprese <b class="t-ok">${d.extra} kcal per l’allenamento</b>, da mangiare dopo. Se salti la seduta, non servono.` : 'Giorno di riposo: solo la base.'}</p>
+    ${r ? menuHtml(t, r) : ''}
     ${n.last ? `<p class="small" style="margin-top:6px"><b>Ultima modifica:</b> ${esc(n.last)}</p>` : ''}
   </section>`;
 }
@@ -1030,7 +1035,7 @@ function viewImpostazioni() {
         <button class="ghost" data-act="snap" data-k="${x.k}">${ui.confirmSnap === x.k ? 'Conferma' : 'Ripristina'}</button></div>`; }).join('')}` : ''}
     <button class="danger" style="margin-top:14px" data-act="reset">${ui.confirmReset ? 'Tocca di nuovo per cancellare tutto' : 'Cancella tutti i dati'}</button>
   </section>
-  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.16 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.16.1 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
 }
 
 // ---------- Render ----------
