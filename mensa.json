@@ -8,11 +8,14 @@
    "url": "https://www.nutreetionlab.com/it/piatti/vellutata-di-zucca/pr-2375",
    "desc": "Vellutata di zucca(zucca, patate, acqua, cipolla di tropea e brodo vegetale) con fragranti CROSTINI al SESAMO bianco e cremina di formaggio (PARMIGIANO REGGIANO 24 MESI, ALPIGIANA fresca e LATTE intero).",
    "portion": 448,
-   "kcal": 370,
-   "p": 13,
-   "c": 62,
-   "f": 8,
-   "unknown": [],
+   "kcal": 340,
+   "p": 10,
+   "c": 63,
+   "f": 6,
+   "unknown": [
+    "mesi"
+   ],
+   "ok": true,
    "ing": [
     {
      "name": "Zucca",
@@ -27,7 +30,7 @@
      "g": 35
     },
     {
-     "name": "Parmigiano Reggiano 24 mesi",
+     "name": "mesi",
      "g": 10
     },
     {
@@ -52,6 +55,7 @@
    "c": 60,
    "f": 24,
    "unknown": [],
+   "ok": true,
    "ing": [
     {
      "name": "PANINO al LATTE",
@@ -87,6 +91,7 @@
    "c": 88,
    "f": 46,
    "unknown": [],
+   "ok": true,
    "ing": [
     {
      "name": "Tortelli",
@@ -107,14 +112,40 @@
    "name": "Tonno Affumicato",
    "price": "€11,50",
    "url": "https://www.nutreetionlab.com/it/piatti/pr-1061",
-   "desc": "Tonno affumicato servito con spinacino, cavolo cappuccio viola, riso venere, avocado e nocciole.Allergeni : Pesce e derivati. Frutta a guscio e derivati.Consumare entro 3 gg Porzione : grammatura alimenti crudi Riso Venere 70 g Tonno Affumicato 40 g Cavolo cappuccio viola 40 g Spinacino 30 g Avocado 30 g Nocciole 15 g 460 kcal 1942 kj",
+   "desc": "Tonno affumicato servito con spinacino, cavolo cappuccio viola, riso venere, avocado e nocciole.Allergeni : Pesce e derivati. Frutta a guscio e derivati.Consumare entro 3 gg",
    "portion": 0,
-   "kcal": 0,
-   "p": 0,
-   "c": 0,
-   "f": 0,
+   "kcal": 460,
+   "p": 20,
+   "c": 61,
+   "f": 16,
    "unknown": [],
-   "ing": []
+   "ok": true,
+   "ing": [
+    {
+     "name": "Riso Venere",
+     "g": 70
+    },
+    {
+     "name": "Tonno Affumicato",
+     "g": 40
+    },
+    {
+     "name": "Cavolo cappuccio viola",
+     "g": 40
+    },
+    {
+     "name": "Spinacino",
+     "g": 30
+    },
+    {
+     "name": "Avocado",
+     "g": 30
+    },
+    {
+     "name": "Nocciole",
+     "g": 15
+    }
+   ]
   },
   {
    "id": 2427,
@@ -123,11 +154,12 @@
    "url": "https://www.nutreetionlab.com/it/piatti/spiedini-di-pollo-e-spinaci/pr-2427",
    "desc": "Spiedini di pollo accompagnati da spinaci mantecati con burro e parmigiano",
    "portion": 330,
-   "kcal": 1000,
-   "p": 106,
-   "c": 0,
-   "f": 61,
+   "kcal": 430,
+   "p": 50,
+   "c": 2,
+   "f": 23,
    "unknown": [],
+   "ok": true,
    "ing": [
     {
      "name": "Spiedini di pollo",
@@ -151,6 +183,7 @@
    "c": 101,
    "f": 3,
    "unknown": [],
+   "ok": true,
    "ing": [
     {
      "name": "PASTA MISTA",
@@ -173,29 +206,13 @@
    "url": "https://www.nutreetionlab.com/it/piatti/pr-1050",
    "desc": "MAZZANCOLLE condite con curry, quinoa, zucchine e carote alla julienne saltate in padella con Olio Evo.",
    "portion": 350,
-   "kcal": 410,
-   "p": 37,
-   "c": 54,
-   "f": 6,
+   "kcal": 0,
+   "p": 0,
+   "c": 0,
+   "f": 0,
    "unknown": [],
-   "ing": [
-    {
-     "name": "MAZZANCOLLE",
-     "g": 140
-    },
-    {
-     "name": "Zucchine",
-     "g": 75
-    },
-    {
-     "name": "Carote",
-     "g": 75
-    },
-    {
-     "name": "Quinoa",
-     "g": 70
-    }
-   ]
+   "ok": false,
+   "ing": []
   },
   {
    "id": 2393,
@@ -204,11 +221,12 @@
    "url": "https://www.nutreetionlab.com/it/piatti/lasagne-alla-bolognese/pr-2393",
    "desc": "Lasagna con ragu' (salsiccia, manzo, SEDANO, carote, cipolla e olio EVO), BESCIAMELLA (latte, burro, farina, sale) e PARMIGIANO REGGIANO.",
    "portion": 330,
-   "kcal": 860,
-   "p": 44,
-   "c": 49,
-   "f": 52,
+   "kcal": 680,
+   "p": 38,
+   "c": 54,
+   "f": 33,
    "unknown": [],
+   "ok": true,
    "ing": [
     {
      "name": "Ragu' di salsiccia",
@@ -233,14 +251,24 @@
    "name": "Funghi e Lenticchie",
    "price": "€11,00",
    "url": "https://www.nutreetionlab.com/it/piatti/funghi-e-lenticchie/pr-1138",
-   "desc": "Insalata di funghi champignon con lenticchie, pomodori secchi e spinacino.Allergeni : Non presenti.Può contenere lattosio, uova, pesce, crostacei, soia frutta a guscio, traccie di sedano, semi di sesamo.Consumare entro 3 gg PORZIONE : GRAMMATURA ALIMENTI CRUDI Lenticchie 180 g Funghi Champignon 50 g DICHIARAZIONE NUTRIZIONALE Valori medi per : 100 g Porzione da g %* Energia kJ kcal kJ kcal % Grassi g g % Di cui acidi grassi saturi g g % Carboidrati g g % Di cui zuccheri g g % Fibre g g % Proteine g g % Sale g g % *Assunzioni di riferimento di un adulto medio (8400 kJ / 2000 kcal)",
+   "desc": "Insalata di funghi champignon con lenticchie, pomodori secchi e spinacino.Allergeni : Non presenti.Può contenere lattosio, uova, pesce, crostacei, soia frutta a guscio, traccie di sedano, semi di sesamo.Consumare entro 3 gg",
    "portion": 0,
-   "kcal": 0,
-   "p": 0,
-   "c": 0,
-   "f": 0,
+   "kcal": 220,
+   "p": 18,
+   "c": 38,
+   "f": 1,
    "unknown": [],
-   "ing": []
+   "ok": true,
+   "ing": [
+    {
+     "name": "Lenticchie",
+     "g": 180
+    },
+    {
+     "name": "Funghi Champignon",
+     "g": 50
+    }
+   ]
   },
   {
    "id": 2583,
@@ -254,6 +282,7 @@
    "c": 95,
    "f": 39,
    "unknown": [],
+   "ok": true,
    "ing": [
     {
      "name": "CASERECCE",
@@ -264,7 +293,7 @@
      "g": 50
     },
     {
-     "name": "PESTO ALLA GENOVESE :",
+     "name": "PESTO ALLA GENOVESE",
      "g": 40
     },
     {
@@ -274,5 +303,5 @@
    ]
   }
  ],
- "updated": "2026-11-24T21:30:29.572Z"
+ "updated": "2026-11-24T21:33:14.075Z"
 }
