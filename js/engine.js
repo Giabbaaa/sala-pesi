@@ -119,10 +119,28 @@ export function migrate(s) {
 export function exSettings(state, id) {
   const e = EX[id];
   const s = state.settings.ex[id] || {};
-  const defInc = e.inc || (e.equip === 'manubri' ? 2 : 2.5);
   const bar = e.equip === 'bilanciere';
   const lb = s.inc === 'lb';
-  return { inc: lb ? 15 * LB : (s.inc ?? defInc), lb, incSet: s.inc != null, plates: s.plates ?? bar, base: s.base ?? (bar ? (e.bar ?? 20) : 0), note: s.note || '' };
+  // Salto di carico automatico (dal 24/11 niente più tabella Attrezzi): quello tipico dell'attrezzo,
+  // più piccolo se dai pesi segnati si vede che l'attrezzo sale di meno. I vecchi valori scelti a mano non contano più.
+  const inc = lb ? 15 * LB : learnedInc(state, id, e.inc || (e.equip === 'manubri' ? 2 : 2.5));
+  // Calcolo dei dischi da solo per bilanciere e macchine a dischi (leg press); peso a vuoto con la pressione lunga
+  return { inc, lb, plates: s.plates ?? (bar || PLATE_LOADED.includes(id)), base: s.base ?? (bar ? (e.bar ?? 20) : 0), note: s.note || '' };
+}
+// Attrezzi che si caricano con i dischi (oltre ai bilancieri)
+const PLATE_LOADED = ['Leg_Press', 'Calf_Press_On_The_Leg_Press_Machine', 'Hack_Squat', 'Smith_Machine_Squat', 'Smith_Machine_Incline_Bench_Press', 'T-Bar_Row_with_Handle'];
+// Il salto più piccolo tra i carichi diversi segnati su questo esercizio (almeno 1 kg, al massimo quello tipico)
+const incCache = new WeakMap();
+function learnedInc(state, id, def) {
+  const ss = state.sessions || [];
+  let c = incCache.get(ss);
+  if (!c || c.n !== ss.length) { c = { n: ss.length, by: {} }; incCache.set(ss, c); }
+  if (c.by[id] != null) return c.by[id] || def;
+  const kgs = [...new Set(ss.flatMap(x => (x.items || []).filter(i => i.id === id).flatMap(i => (i.sets || []).map(t => Math.round((t.kg || 0) * 2) / 2))))].filter(k => k > 0).sort((a, b) => a - b);
+  let step = 0;
+  for (let i = 1; i < kgs.length; i++) { const d = kgs[i] - kgs[i - 1]; if (d >= 1 && (!step || d < step)) step = d; }
+  c.by[id] = step && step < def ? step : 0;
+  return c.by[id] || def;
 }
 
 // ---------- Pacco pesi in libbre ----------

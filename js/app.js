@@ -648,10 +648,6 @@ function viewSession() {
       ${open ? `<div class="how ${ui.infoAnim === it.id ? 'open' : ''}">${howHtml(e)}
         <div class="note"><b>Nota personale</b><input type="text" placeholder="es. sedile al 4" value="${esc(st.note)}" data-in="note" data-id="${it.id}"></div></div>` : ''}
       ${(() => { const sw = swapButtons(c, g, it, idx, usedIds); return sw ? `<div class="ctrls">${sw}</div>` : ''; })()}`;
-    if (!st.incSet && !noKg(it.id)) {
-      html += `<div style="margin-top:10px"><p class="small"><b>Di quanto sale il carico su questo attrezzo?</b> Lo chiedo una volta sola.</p>
-        <div class="chips" style="margin-top:6px">${[1, 1.25, 2, 2.5, 5].map(v => `<button class="${v === st.inc ? 'on' : ''}" data-act="inc" data-id="${it.id}" data-v="${v}">${kg(v)} kg</button>`).join('')}${E.canLb(it.id) ? `<button data-act="inc" data-id="${it.id}" data-v="lb">pacco in libbre</button>` : ''}</div></div>`;
-    }
     const wu = !logged(it).length ? E.warmups(state, it.id, it.kg) : [];
     const firstForMuscle = c.items.findIndex(x => x.id !== 'cardio' && EX[x.id]?.muscle === e.muscle && EX[x.id].type === 'multi') === idx;
     if (wu.length && firstForMuscle) html += `<p class="small" style="margin-top:10px"><b>Riscaldamento:</b> ${wu.map(w => `1×${w.reps} a ${load(it.id, w.kg)}`).join(', poi ')}</p>`;
@@ -734,7 +730,6 @@ function logSet(eff) {
   const set = { kg: noKg(it.id) ? 0 : d.kg, reps: d.reps, eff, t: Date.now() };
   const wasEdit = !!it.sets[d.s];
   if (wasEdit) set.t = it.sets[d.s].t || set.t;
-  if (!noKg(it.id) && !E.exSettings(state, it.id).incSet) state.settings.ex[it.id] = { ...(state.settings.ex[it.id] || {}), inc: E.exSettings(state, it.id).inc };
   const wasDone = isDone(it);
   it.sets[d.s] = set; it.skipped = false;
   // Al limite già alla prima serie sotto il minimo: le serie seguenti si alleggeriscono
@@ -941,7 +936,6 @@ function viewCibo() {
 // ---------- IMPOSTAZIONI ----------
 function viewImpostazioni() {
   const s = state.settings;
-  const planIds = MUSCLE_ORDER.flatMap(m => E.poolOf(state, m)).filter(id => !noKg(id));
   return `<h1>Impostazioni</h1>
   <h2>Allenamento</h2><section class="card stack">
     <div><span>Durata abituale della seduta</span>
@@ -954,13 +948,6 @@ function viewImpostazioni() {
   </section>
   <h2>Dischi disponibili</h2><section class="card"><div class="chips">${[25, 20, 15, 10, 5, 2.5, 1.25].map(p => `<button class="${s.plates.includes(p) ? 'on' : ''}" data-act="plate" data-v="${p}">${kg(p)} kg</button>`).join('')}</div>
     <p class="small muted" style="margin-top:8px">Per gli attrezzi a dischi l’app ti dice cosa mettere per lato.</p></section>
-  <h2>Attrezzi</h2><section class="card">
-    <p class="small muted">Salto di carico (o “libbre” per le macchine col pacco in libbre), se si carica con i dischi e il peso a vuoto (slitta o bilanciere).</p>
-    ${planIds.map(id => { const x = E.exSettings(state, id); return `<div class="exset"><span>${esc(EX[id].name)}</span>
-      <select data-in="ex-inc" data-id="${id}">${[1, 1.25, 2, 2.5, 5].map(v => `<option value="${v}" ${!x.lb && v === x.inc ? 'selected' : ''}>+${kg(v)}</option>`).join('')}${E.canLb(id) ? `<option value="lb" ${x.lb ? 'selected' : ''}>libbre</option>` : ''}</select>
-      <button class="${x.plates ? 'primary' : ''}" style="min-height:36px;padding:4px 10px;font-size:13px" data-act="ex-plates" data-id="${id}">dischi</button>
-      ${x.plates ? `<span class="small muted" style="grid-column:1/2">peso a vuoto</span><input type="text" inputmode="decimal" value="${kg(x.base)}" data-in="ex-base" data-id="${id}">` : ''}</div>`; }).join('')}
-  </section>
   <h2>Dati e backup</h2><section class="card stack">
     ${ghHtml()}
     <p class="small muted">I dati restano su questo telefono anche quando l’app si aggiorna. Se cancelli l’app o cambi iPhone servono una copia su file (per esempio su iCloud Drive). Ultima copia su file: <b>${state.meta.exported ? dayLabel(state.meta.exported) : 'mai'}</b>.</p>
@@ -970,7 +957,7 @@ function viewImpostazioni() {
         <button class="ghost" data-act="snap" data-k="${x.k}">${ui.confirmSnap === x.k ? 'Conferma' : 'Ripristina'}</button></div>`; }).join('')}` : ''}
     <button class="danger" style="margin-top:14px" data-act="reset">${ui.confirmReset ? 'Tocca di nuovo per cancellare tutto' : 'Cancella tutti i dati'}</button>
   </section>
-  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.11 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.12 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
 }
 
 // ---------- Render ----------
@@ -1030,11 +1017,24 @@ function render() {
 }
 
 // ---------- Scheda esercizio a comparsa (tenendo premuto in Piano) ----------
-function renderSheet() {
+function renderSheet(force = false) {
   const el = $('#sheet');
   if (el.classList.contains('closing')) {
     if (!ui.sheet) return;              // sta scendendo: la si lascia finire
     el.classList.remove('closing'); el.dataset.id = '';
+  }
+  if (ui.sheet === 'plates' && EX[ui.platesId]) {
+    const id = ui.platesId, x = E.exSettings(state, id);
+    if (el.dataset.id === 'plates:' + x.plates && !el.hidden && !force) return;
+    el.dataset.id = 'plates:' + x.plates;
+    el.innerHTML = `<div class="sheet-bg" data-act="sheet-close"></div>
+      <div class="sheet-card" role="dialog" aria-modal="true" aria-label="Dischi">
+        <div class="row between" style="align-items:flex-start"><h3>${esc(EX[id].name)}</h3><button class="icon ghost" data-act="sheet-close" aria-label="Chiudi">✕</button></div>
+        <div class="row between" style="margin-top:12px"><span>Si carica con i dischi</span><span class="seg"><button class="${x.plates ? 'on' : ''}" data-act="${x.plates ? '' : 'ex-plates'}" data-id="${id}">sì</button><button class="${x.plates ? '' : 'on'}" data-act="${x.plates ? 'ex-plates' : ''}" data-id="${id}">no</button></span></div>
+        ${x.plates ? `<div class="row between" style="margin-top:12px"><span>Peso a vuoto (bilanciere o slitta), kg</span><input style="width:90px" type="text" inputmode="decimal" value="${kg(x.base)}" data-in="ex-base" data-id="${id}"></div>
+        <p class="small muted" style="margin-top:8px">Durante la serie l’app ti dice cosa mettere per lato. Per la leg press lascia 0 e segna solo i dischi.</p>` : ''}
+      </div>`;
+    el.hidden = false; return;
   }
   if (ui.sheet === 'menu' && ui.menu) {
     el.dataset.id = 'menu';
@@ -1245,10 +1245,10 @@ document.addEventListener('click', ev => {
       if (c.items[i].skipped && g.items.every(x => isDone(x) || x.skipped)) { const n = groups.findIndex((gr, gi) => gi > c.cur && !gr.items.every(x => isDone(x) || x.skipped)); if (n >= 0) { sync(); return go(n); } }
     } return rerender();
     case 'cardio-done': { const it = c.items[i]; it.sets = it.sets.length ? [] : [{ kg: 0, reps: it.minutes, eff: 'giusto', t: Date.now() }]; if (it.sets.length) ui.flashEx = i; return rerender(); }
-    case 'inc': state.settings.ex[el.dataset.id] = { ...(state.settings.ex[el.dataset.id] || {}), inc: el.dataset.v === 'lb' ? 'lb' : +el.dataset.v }; return rerender();
     case 'unit': { // kg ⇄ pacco in libbre, direttamente dalla serie
       const id = el.dataset.id, x = state.settings.ex[id] || {};
-      state.settings.ex[id] = x.inc === 'lb' ? { ...x, inc: x.incKg ?? E.exSettings({ settings: { ex: {} } }, id).inc } : { ...x, inc: 'lb', incKg: typeof x.inc === 'number' ? x.inc : undefined };
+      const { inc, incKg, ...rest } = x;
+      state.settings.ex[id] = inc === 'lb' ? rest : { ...rest, inc: 'lb' };
       if (ui.draft?.kg != null) ui.draft.kg = E.snapLoad(state, id, ui.draft.kg);
       toast(isLb(id) ? 'Pacco in libbre: segni il numero dove metti il perno' : 'Carico in kg');
       return rerender(); }
@@ -1268,7 +1268,8 @@ document.addEventListener('click', ev => {
     case 'sound-test': unlockAudio(); chime(); return;
     case 'dur': state.settings.sessionMinutes = +el.dataset.v; replan(); return rerender();
     case 'plate': { const v = +el.dataset.v; const p = state.settings.plates; state.settings.plates = p.includes(v) ? p.filter(x => x !== v) : [...p, v]; return rerender(); }
-    case 'ex-plates': { const id = el.dataset.id; const x = state.settings.ex[id] || {}; state.settings.ex[id] = { ...x, plates: !E.exSettings(state, id).plates }; return rerender(); }
+    case 'ex-plates': { const id = el.dataset.id; const x = state.settings.ex[id] || {}; state.settings.ex[id] = { ...x, plates: !E.exSettings(state, id).plates }; renderSheet(true); return rerender(); }
+    case 'lp-plates': ui.sheet = 'plates'; ui.platesId = el.dataset.id; return renderSheet();
     case 'gh-connect': { const t = ($('[data-in=gh-token]')?.value || '').trim(); if (!t) { ui.ghMsg = 'Incolla prima la chiave'; return render(); } ghConnect(t); return; }
     case 'gh-now': ghBackup({ force: true }); toast('Salvataggio su GitHub…'); return;
     case 'gh-restore': if (!ui.confirmGh) { ui.confirmGh = true; return render(); } ui.confirmGh = false; ghRestore(); return;
@@ -1313,7 +1314,6 @@ document.addEventListener('change', ev => {
     case 'note': state.settings.ex[el.dataset.id] = { ...(state.settings.ex[el.dataset.id] || {}), note: el.value.trim() }; save(); return;
     case 'weight': case 'cp-weight': { const v = num(); if (!(v > 30 && v < 300)) return; const w = state.body.weights.filter(x => x.date !== today()); w.push({ date: today(), kg: v }); w.sort((a, b) => a.date.localeCompare(b.date)); state.body.weights = w; E.nutritionCheck(state); toast('Peso salvato'); break; }
     case 'waist': case 'cp-waist': { const v = num(); if (!(v > 40 && v < 200)) return; const w = state.body.waist.filter(x => x.date !== today()); w.push({ date: today(), cm: v }); state.body.waist = w; toast('Vita salvata'); break; }
-    case 'ex-inc': state.settings.ex[el.dataset.id] = { ...(state.settings.ex[el.dataset.id] || {}), inc: el.value === 'lb' ? 'lb' : +el.value }; break;
     case 'ex-base': state.settings.ex[el.dataset.id] = { ...(state.settings.ex[el.dataset.id] || {}), base: num() || 0 }; break;
     case 'import': {
       const f = el.files[0]; if (!f) return;
@@ -1367,6 +1367,10 @@ function lpMenu(el) {
     const it = c?.items[+el.dataset.i]; if (!it) return false;
     title = it.id === 'cardio' ? 'Cardio extra' : EX[it.id].name;
     if (it.id !== 'cardio') items.push({ act: 'lp-info', label: 'Come si fa', attrs: `data-id="${it.id}"` });
+    if (it.id !== 'cardio') {
+      const x = E.exSettings(state, it.id);
+      if (x.plates || state.settings.ex[it.id]?.plates === false) items.push({ act: 'lp-plates', label: x.plates ? `Dischi · peso a vuoto ${kg(x.base)} kg` : 'Dischi · non usati', attrs: `data-id="${it.id}"` });
+    }
     if (!logged(it).length) items.push({ act: 'ov-del', label: 'Togli dalla seduta', danger: true, attrs: `data-i="${el.dataset.i}"` });
   } else if (k === 'plan') {
     if (!c) return false;
