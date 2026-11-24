@@ -226,13 +226,6 @@ function spark(values, h = 48) {
   return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><path d="${d}"/><circle cx="${l[0]}" cy="${l[1]}" r="4"/></svg>`;
 }
 
-const TRASH = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4zM6 9h12l-1 12H7zm4 2v8h1.5v-8zm2.5 0v8H14v-8z"/></svg>';
-// Tasto cestino per una seduta salvata: primo tocco chiede conferma, il secondo elimina
-function delButton(id) {
-  return ui.confirmDel === id
-    ? `<span class="row" style="gap:6px"><button class="danger" data-act="del-yes" data-id="${id}">Elimina</button><button data-act="del-no">Annulla</button></span>`
-    : `<button class="icon ghost danger" data-act="del" data-id="${id}" aria-label="Elimina allenamento">${TRASH}</button>`;
-}
 // Livello di colore da una frazione 0..1: completo = 1 (menta), almeno metà = 2 (giallo), meno = 3 (arancio)
 const lvOf = f => f >= 1 ? 'lv1' : f >= 0.5 ? 'lv2' : 'lv3';
 const PRIO_LABEL = { alta: 'alta', normale: 'media', minima: 'bassa' };
@@ -314,7 +307,7 @@ function viewOggi() {
   if (state.cycleBanner) html += `<section class="alert"><b>${esc(state.cycleBanner)}</b><p class="small">Se vuoi, in Piano puoi cambiare gli esercizi àncora con una variante.</p><button class="ghost" data-act="cycle-ok">OK</button></section>`;
 
   const rec = E.recommendedDays(state, t);
-  const show = (c && (c.forced || hasLogs(c))) || rec[0] === t || todaySession();
+  const show = (c && (c.forced || hasLogs(c))) || (rec[0] === t && state.skipDay !== t) || todaySession();
   if (!show) {
     const nx = E.nextLabel(state, t);
     html += `<section class="card"><h3>Oggi riposo</h3>
@@ -342,8 +335,8 @@ const EFF_LV = { facile: 'lv1', giusto: 'lv2', limite: 'lv3' };
 function sessionSummary(s) {
   const nSets = s.items.reduce((a, i) => a + (i.id === 'cardio' ? 0 : i.sets.length), 0);
   const title = s.free || s.mini ? 'Esercizi extra' : (s.frac ?? 1) < 1 ? 'Fatto in parte' : 'Fatto!';
-  return `<section class="card"><div class="del-corner">${delButton(s.id)}</div>
-    <h3>${title}${s.deload ? ' · scarico' : ''}</h3>
+  return `<section class="card" data-lp="ses" data-id="${s.id}">
+    <h3 class="${title === 'Fatto!' ? 't-ok' : ''}">${title}${s.deload ? ' · scarico' : ''}</h3>
     <div class="summary" style="margin-top:8px"><span><b>${s.minutes || '?'}</b> min</span><span><b>${s.kcal ? `${s.kcal[0]}–${s.kcal[1]}` : '–'}</b> kcal</span><span><b>${nSets}</b> serie</span></div>
     ${s.items.filter(it => it.sets.length).map(it => it.id === 'cardio'
       ? `<div class="hist-row"><b><span class="cardio-ico">🚴</span>Cardio</b><span class="small muted">${it.minutes} min</span></div>`
@@ -358,7 +351,7 @@ function futureDay(k) {
   let f = null; try { f = E.forecast(state, k, plan, t); } catch { f = null; }
   if (!f) return `<section class="card"><h3>Riposo</h3><p class="muted">${(state.settings.days || []).length ? 'Non è tra i giorni in cui pensi di andare (li scegli in Piano → Ritmo).' : 'Non è tra i giorni consigliati.'}</p></section>`;
   const work = f.items.filter(i => i.id !== 'cardio');
-  return `<section class="card"><h3>Allenamento previsto${f.deload ? ' · scarico' : ''}</h3>
+  return `<section class="card"><h3 class="t-bad">Allenamento previsto${f.deload ? ' · scarico' : ''}</h3>
     <p class="reason">${esc(f.reason)}</p>
     <div class="summary"><span><b>${f.minutes}</b> min</span><span><b>${work.length}</b> esercizi</span><span><b>${work.reduce((a, i) => a + i.planSets, 0)}</b> serie</span></div>
     ${f.items.map(it => it.id === 'cardio'
@@ -472,8 +465,8 @@ function dayCard(c) {
   const doneN = work.filter(isDone).length;
   const complete = work.length > 0 && doneN === work.length;
   const nSets = s.items.reduce((a, i) => a + (i.id === 'cardio' ? 0 : i.sets.length), 0);
-  const html = `<section class="card done-card ${complete ? 'complete' : ''} ${ui.flashDone ? 'pop' : ''}"><div class="del-corner">${delButton(s.id)}</div>
-    <div class="big-num">${complete ? 'Fatto!' : 'Fatto in parte'}</div>
+  const html = `<section class="card done-card ${complete ? 'complete' : ''} ${ui.flashDone ? 'pop' : ''}" data-lp="ses" data-id="${s.id}">
+    <div class="big-num ${complete ? 't-ok' : ''}">${complete ? 'Fatto!' : 'Fatto in parte'}</div>
     ${complete ? '' : `<p class="muted">${doneN} di ${work.length} esercizi</p><div class="bar ${lvOf(work.length ? doneN / work.length : 0)}"><i style="width:${work.length ? Math.max(4, doneN / work.length * 100) : 0}%"></i></div>`}
     <div class="summary" style="justify-content:center;margin-bottom:4px"><span><b>${s.minutes}</b> min</span><span><b>${s.kcal[0]}–${s.kcal[1]}</b> kcal</span><span><b>${nSets}</b> serie</span></div>
     ${s.records?.length ? `<p><b>Record battuti</b></p>${s.records.map(r => `<p>${esc(EX[r.id].name)} · ${kg(Math.round(r.e1rm))} kg stimati</p>`).join('')}` : ''}
@@ -497,22 +490,20 @@ function overview(c) {
       const st = done ? 'ex-done' : n ? 'ex-part' : it.skipped ? 'ex-skip' : '';
       const pop = ui.flashEx === idx ? 'pop' : '';
       if (it.id === 'cardio') {
-        inner += `<div class="ex-row ${st} ${pop}"><div data-act="open" data-g="${gi}"><div class="name"><span class="cardio-ico">🚴</span>Cardio extra${n ? ' <span class="check">✓</span>' : ''}</div><div class="meta">${it.minutes} min · ellittica o tapis roulant in salita</div></div>
-          <div>${n ? '' : `<button class="icon" data-act="ov-del" data-i="${idx}" aria-label="Togli">✕</button>`}</div></div>`;
+        inner += `<div class="ex-row ${st} ${pop}" data-lp="ex" data-i="${idx}"><div data-act="open" data-g="${gi}"><div class="name"><span class="cardio-ico">🚴</span>Cardio extra${n ? ' <span class="check">✓</span>' : ''}</div><div class="meta">${it.minutes} min · ellittica o tapis roulant in salita</div></div><div></div></div>`;
         return;
       }
       const e = EX[it.id];
       const best = n ? logged(it).reduce((b, x) => (x.kg > b.kg || (x.kg === b.kg && x.reps > b.reps)) ? x : b) : null;
       const meta = done ? `${n} serie · ${setTxt(it.id, best)}`
         : n ? `${n} di ${it.planSets} serie fatte` : it.skipped ? 'saltato' : `${it.planSets} × ${rangeLabel(it.id)} · ${loadLabel(it.id, it.kg)}`;
-      inner += `<div class="ex-row ${st} ${pop}">
+      inner += `<div class="ex-row ${st} ${pop}" data-lp="ex" data-i="${idx}">
         <div><div data-act="open" data-g="${gi}"><div class="name">${esc(e.name)}${done ? ' <span class="check">✓</span>' : ''}</div>
           <div class="meta">${meta}</div>
           ${!n && it.note ? `<div class="tip ${/−|ridotto|Fermo|pausa/.test(it.note) ? 'down' : ''}">${esc(it.note)}</div>` : ''}</div>
           <div class="ctrls">
             <button data-act="ov-sets" data-i="${idx}" data-d="-1" aria-label="Una serie in meno" ${it.planSets <= Math.max(1, n) ? 'disabled' : ''}>−</button>
             <button data-act="ov-sets" data-i="${idx}" data-d="1" aria-label="Una serie in più">+</button>
-            ${n ? '' : `<button data-act="ov-del" data-i="${idx}" aria-label="Togli">✕</button>`}
           </div></div>
         <div class="updown"><button class="icon" data-act="ov-move" data-i="${idx}" data-d="-1" aria-label="Sposta su" ${idx === 0 ? 'disabled' : ''}>↑</button>
           <button class="icon" data-act="ov-move" data-i="${idx}" data-d="1" aria-label="Sposta giù" ${idx === c.items.length - 1 ? 'disabled' : ''}>↓</button></div>
@@ -531,9 +522,9 @@ function overview(c) {
   const nextName = nextG >= 0 ? (groups[nextG].items[0].id === 'cardio' ? 'Cardio extra' : EX[groups[nextG].items[0].id].name) : '';
   const isToday = c.date === today();
   const dur = c.duration || E.usualMinutes(state);
-  return `<section class="card">
+  return `<section class="card" data-lp="plan">
     ${isToday ? '' : `<div class="row between" style="margin-bottom:6px"><span class="small muted">Stai modificando un giorno passato</span><button class="ghost" data-act="past-close">Fine</button></div>`}
-    <h3>${!isToday ? `Allenamento di ${dayLabel(c.date).toLowerCase()}` : c.free ? 'Esercizi di oggi' : 'Seduta di oggi'}${c.deload ? ' · scarico' : ''}</h3>
+    <h3 class="t-warn">${!isToday ? `Allenamento di ${dayLabel(c.date).toLowerCase()}` : c.free ? 'Esercizi di oggi' : 'Seduta di oggi'}${c.deload ? ' · scarico' : ''}</h3>
     ${c.free || !isToday ? '' : `<p class="reason">${esc(c.reason)}</p>`}
     ${logs || !isToday ? '' : `${c.free ? '' : `<div class="row between durrow"><span class="small muted">Tempo oggi</span><span class="seg">${E.DURATIONS.map(v => `<button class="${dur === v ? 'on' : ''}" data-act="today-dur" data-v="${v}">${v}′</button>`).join('')}</span></div>`}
     <div class="summary"><span><b>${c.minutes}</b> min</span><span><b>${work.length}</b> esercizi</span><span><b>${all}</b> serie</span><span><b>${kc[0]}–${kc[1]}</b> kcal</span></div>
@@ -869,10 +860,10 @@ function viewProgressi() {
     ${waist.slice(-4).reverse().map(x => `<p class="small muted">${x.date.split('-').reverse().slice(0, 2).join('/')}: ${kg(x.cm)} cm</p>`).join('')}
   </section>`;
 
-  // Elenco allenamenti, con cestino
+  // Elenco allenamenti (pressione lunga per eliminarne uno)
   if (ss.length) html += `<h2>Allenamenti</h2><section class="card">${[...ss].reverse().map(s => {
     const n = s.items.reduce((a, i) => a + (i.id === 'cardio' ? 0 : (i.sets || []).length), 0);
-    return `<div class="mrow" style="align-items:center"><span><b>${dayLabel(s.date)}</b>${s.deload ? ' <span class="small muted">scarico</span>' : ''}${s.free ? ' <span class="small muted">extra</span>' : s.frac < 1 ? ' <span class="small muted">parziale</span>' : ''}<br><span class="small muted">${s.minutes || '?'} min · ${n} serie${s.kcal ? ` · ${s.kcal[0]}–${s.kcal[1]} kcal` : ''}</span></span>${delButton(s.id)}</div>`;
+    return `<div class="mrow" style="align-items:center" data-lp="ses" data-id="${s.id}"><span><b>${dayLabel(s.date)}</b>${s.deload ? ' <span class="small muted">scarico</span>' : ''}${s.free ? ' <span class="small muted">extra</span>' : s.frac < 1 ? ' <span class="small muted">parziale</span>' : ''}<br><span class="small muted">${s.minutes || '?'} min · ${n} serie${s.kcal ? ` · ${s.kcal[0]}–${s.kcal[1]} kcal` : ''}</span></span></div>`;
   }).join('')}</section>`;
   return html;
 }
@@ -932,7 +923,7 @@ function viewImpostazioni() {
         <button class="ghost" data-act="snap" data-k="${x.k}">${ui.confirmSnap === x.k ? 'Conferma' : 'Ripristina'}</button></div>`; }).join('')}` : ''}
     <button class="danger" style="margin-top:14px" data-act="reset">${ui.confirmReset ? 'Tocca di nuovo per cancellare tutto' : 'Cancella tutti i dati'}</button>
   </section>
-  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.9 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.10 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
 }
 
 // ---------- Render ----------
@@ -960,6 +951,16 @@ function render() {
 // ---------- Scheda esercizio a comparsa (tenendo premuto in Piano) ----------
 function renderSheet() {
   const el = $('#sheet');
+  if (ui.sheet === 'menu' && ui.menu) {
+    el.dataset.id = 'menu';
+    el.innerHTML = `<div class="sheet-bg" data-act="sheet-close"></div>
+      <div class="sheet-card menu-card" role="dialog" aria-modal="true" aria-label="${esc(ui.menu.title)}">
+        <p class="small muted" style="margin:0 0 10px;text-align:center">${esc(ui.menu.title)}</p>
+        ${ui.menu.items.map(x => `<button class="big ${x.danger ? 'danger' : ''}" data-act="${x.act}" ${x.attrs || ''}>${esc(x.label)}</button>`).join('')}
+        <button class="big ghost" data-act="sheet-close">Annulla</button>
+      </div>`;
+    el.hidden = false; return;
+  }
   if (ui.sheet === 'fretta') {
     if (el.dataset.id === 'fretta' && !el.hidden) return;
     el.dataset.id = 'fretta';
@@ -1020,7 +1021,9 @@ document.addEventListener('click', ev => {
     if (tab.dataset.tab === 'oggi' && ui.tab === 'oggi' && ui.day) { ui.stripX = null; return setDay(today()); }   // secondo tocco su Oggi: torna a oggi
     ui.tab = tab.dataset.tab; ui.confirmReset = false; ui.confirmDel = null; ui.confirmSnap = null; toTop(); render(); return;
   }
+  if (Date.now() - (ui.lpEnd || 0) < 450) { ui.lpEnd = 0; return; }   // il tocco che chiude una pressione lunga non conta
   const el = ev.target.closest('[data-act]'); if (!el) return;
+  if (el.closest('.menu-card') && el.dataset.act !== 'sheet-close') closeSheet();
   const a = el.dataset.act; const c = state.current;
   const i = +el.dataset.i; const d = +el.dataset.d;
   const rerender = () => { if (c) { tidySupersets(c); c.minutes = E.planMinutes(state, c); sync(); } save(); render(); };
@@ -1029,7 +1032,15 @@ document.addEventListener('click', ev => {
     case 'intro-ok': state.seenIntro = true; return rerender();
     case 'cycle-ok': state.cycleBanner = null; return rerender();
     case 'notice-ok': state.notice = null; return rerender();
-    case 'force': state.current = E.compose(state, today()); state.current.forced = true; save(); return render();
+    case 'force': delete state.skipDay; state.current = E.compose(state, today()); state.current.forced = true; save(); return render();
+    case 'lp-info': ui.sheet = el.dataset.id; return renderSheet();
+    case 'plan-del': {   // dalla pressione lunga su "Seduta di oggi": via le serie segnate (se ci sono) e la seduta
+      const s0 = c && state.sessions.find(x => x.date === c.date);
+      if (s0 && hasLogs(c)) { snapshot(JSON.stringify(state), 'prima di eliminare un allenamento'); E.deleteSession(state, s0.id); }
+      if (c && c.date !== today()) leavePast();
+      else { if (c && !c.forced && !hasLogs(c)) state.skipDay = today(); state.current = null; }
+      state.rest = null; save(); toast('Seduta eliminata'); return render();
+    }
     case 'recompose': { if (hasLogs(c)) return; const f = c?.forced; state.current = E.compose(state, today(), Date.now(), c?.duration); state.current.forced = f; toast('Seduta ricomposta'); save(); return render(); }
     case 'today-dur': {
       if (!c || hasLogs(c)) return;
@@ -1218,6 +1229,51 @@ document.addEventListener('contextmenu', ev => {
   ev.preventDefault(); ui.longAt = Date.now(); ui.sheet = b.dataset.id; renderSheet();
 });
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && ui.sheet) closeSheet(); });
+
+// Pressione lunga su un allenamento, un esercizio o la seduta di oggi: si apre il menu con le opzioni (eliminare, togliere…)
+function lpMenu(el) {
+  const k = el.dataset.lp, c = state.current;
+  let title = '', items = [];
+  if (k === 'ses') {
+    const s = state.sessions.find(x => x.id === +el.dataset.id); if (!s) return false;
+    title = `Allenamento di ${dayLabel(s.date).toLowerCase()}`;
+    items = [{ act: 'del-yes', label: 'Elimina allenamento', danger: true, attrs: `data-id="${s.id}"` }];
+  } else if (k === 'ex') {
+    const it = c?.items[+el.dataset.i]; if (!it) return false;
+    title = it.id === 'cardio' ? 'Cardio extra' : EX[it.id].name;
+    if (it.id !== 'cardio') items.push({ act: 'lp-info', label: 'Come si fa', attrs: `data-id="${it.id}"` });
+    if (!logged(it).length) items.push({ act: 'ov-del', label: 'Togli dalla seduta', danger: true, attrs: `data-i="${el.dataset.i}"` });
+  } else if (k === 'plan') {
+    if (!c) return false;
+    const isToday = c.date === today();
+    title = isToday ? 'Seduta di oggi' : `Allenamento di ${dayLabel(c.date).toLowerCase()}`;
+    if (isToday && !hasLogs(c) && !c.free) items.push({ act: 'recompose', label: 'Ricomponi la seduta' });
+    items.push({ act: 'plan-del', label: hasLogs(c) ? 'Elimina la seduta e le serie segnate' : 'Elimina la seduta', danger: true });
+  }
+  if (!items.length) return false;
+  ui.menu = { title, items }; ui.sheet = 'menu'; ui.longAt = Date.now(); renderSheet();
+  return true;
+}
+let lp = null;
+document.addEventListener('touchstart', ev => {
+  if (lp) { clearTimeout(lp.timer); lp = null; }
+  const el = ev.target.closest?.('[data-lp]');
+  if (!el || ev.touches.length !== 1 || ev.target.closest('button,input,select,textarea,.flip')) return;
+  const t = ev.touches[0];
+  lp = { x: t.clientX, y: t.clientY, timer: setTimeout(() => { lp = null; ui.lpOpen = lpMenu(el); }, 500) };
+}, { passive: true });
+document.addEventListener('touchmove', ev => {
+  if (!lp) return; const t = ev.touches[0];
+  if (Math.hypot(t.clientX - lp.x, t.clientY - lp.y) > 10) { clearTimeout(lp.timer); lp = null; }
+}, { passive: true });
+for (const t of ['touchend', 'touchcancel']) document.addEventListener(t, () => {
+  if (lp) { clearTimeout(lp.timer); lp = null; }
+  if (ui.lpOpen) { ui.lpOpen = false; ui.lpEnd = Date.now(); }
+}, { passive: true });
+document.addEventListener('contextmenu', ev => {   // computer: tasto destro
+  const el = ev.target.closest?.('[data-lp]'); if (!el || ev.target.closest('[data-act=xp]')) return;
+  if (lpMenu(el)) ev.preventDefault();
+});
 
 // Scorrimento orizzontale tra un esercizio e l'altro
 let touch = null;
