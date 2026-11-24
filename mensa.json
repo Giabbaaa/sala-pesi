@@ -8,13 +8,11 @@
    "url": "https://www.nutreetionlab.com/it/piatti/vellutata-di-zucca/pr-2375",
    "desc": "Vellutata di zucca(zucca, patate, acqua, cipolla di tropea e brodo vegetale) con fragranti CROSTINI al SESAMO bianco e cremina di formaggio (PARMIGIANO REGGIANO 24 MESI, ALPIGIANA fresca e LATTE intero).",
    "portion": 448,
-   "kcal": 340,
-   "p": 10,
-   "c": 63,
-   "f": 6,
-   "unknown": [
-    "mesi"
-   ],
+   "kcal": 370,
+   "p": 13,
+   "c": 62,
+   "f": 8,
+   "unknown": [],
    "ok": true,
    "ing": [
     {
@@ -30,7 +28,7 @@
      "g": 35
     },
     {
-     "name": "mesi",
+     "name": "Parmigiano Reggiano 24 mesi",
      "g": 10
     },
     {
@@ -206,13 +204,30 @@
    "url": "https://www.nutreetionlab.com/it/piatti/pr-1050",
    "desc": "MAZZANCOLLE condite con curry, quinoa, zucchine e carote alla julienne saltate in padella con Olio Evo.",
    "portion": 350,
-   "kcal": 0,
-   "p": 0,
-   "c": 0,
-   "f": 0,
+   "kcal": 410,
+   "p": 37,
+   "c": 54,
+   "f": 6,
    "unknown": [],
-   "ok": false,
-   "ing": []
+   "ok": true,
+   "ing": [
+    {
+     "name": "MAZZANCOLLE",
+     "g": 140
+    },
+    {
+     "name": "Zucchine",
+     "g": 75
+    },
+    {
+     "name": "Carote",
+     "g": 75
+    },
+    {
+     "name": "Quinoa",
+     "g": 70
+    }
+   ]
   },
   {
    "id": 2393,
@@ -303,5 +318,6 @@
    ]
   }
  ],
- "updated": "2026-11-24T21:33:14.075Z"
+ "updated": "2026-11-24T21:33:53.659Z",
+ "checked": "2026-11-24T21:33:53.659Z"
 }
