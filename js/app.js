@@ -197,7 +197,7 @@ function dayHead(day, t) {
   const wd = E.DAY_NAMES[d.getDay()];
   const year = d.getFullYear() !== E.parseDay(t).getFullYear() ? ` ${d.getFullYear()}` : '';
   return `<div class="dayhead"><div class="row between"><span class="rel">${rel}</span>${n ? `<button class="link" data-act="day" data-k="${t}">Torna a oggi</button>` : ''}</div>
-    <h1>${wd[0].toUpperCase()}${wd.slice(1)} ${d.getDate()} ${E.MONTHS[d.getMonth()]}${year}</h1></div>`;
+    <h1>${wd[0].toUpperCase()}${wd.slice(1)} ${d.getDate()}/${d.getMonth() + 1}${year ? `/${d.getFullYear()}` : ''}</h1></div>`;
 }
 function calendarCard() {
   const t = today(), sel = ui.day || t;
