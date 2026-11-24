@@ -1,5 +1,5 @@
 // Service worker: tutto in cache per funzionare offline in palestra.
-const VERSION = 'v1.13';
+const VERSION = 'v1.14';
 const ASSETS = [
 "./",
 "index.html",
@@ -210,6 +210,7 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
   if (url.origin !== location.origin) return;
+  if (url.pathname.endsWith('/mensa.json')) return;          // il menu della mensa sempre dalla rete (l'app ne tiene una copia)
   // Subito dalla cache (veloce anche senza rete), e intanto aggiorna in background
   e.respondWith(caches.open(VERSION).then(async c => {
     const hit = await c.match(e.request, { ignoreSearch: true });

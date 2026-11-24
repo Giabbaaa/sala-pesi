@@ -418,3 +418,10 @@ button.back { padding: 4px 2px; font-weight: 600; }
 [data-lp] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .menu-card { display: flex; flex-direction: column; gap: 8px; }
 .menu-card button.danger { color: var(--bad); font-weight: 600; }
+
+/* Mensa */
+.mensa { margin: 4px 0 12px; padding: 10px 12px; border-radius: 12px; background: var(--card2, rgba(127,127,127,.08)); }
+.mensa .link { margin-top: 4px; padding: 0; }
+.mensa-list { margin-top: 10px; display: grid; gap: 8px; max-height: 60vh; overflow: auto; }
+.mensa-row { padding: 8px 0; border-bottom: 1px solid var(--line, rgba(127,127,127,.2)); }
+.mensa-row:last-child { border-bottom: 0; }

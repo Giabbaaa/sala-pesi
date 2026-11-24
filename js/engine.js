@@ -38,6 +38,7 @@ export function initialState() {
       ex: {},                        // per esercizio: { inc, plates, base, note }
       plates: [20, 10, 5, 2.5, 1.25],
       sessionMinutes: 60,            // durata abituale della seduta (si può cambiare ogni giorno)
+      office: [1, 2, 3, 4, 5],       // giorni in cui pranza con la mensa (0 = domenica)
     },
     sessions: [],
     current: null,
@@ -1057,3 +1058,25 @@ export function dayNutrition(state, day = dayKey(), plannedMinutes = 0) {
 }
 
 export const carbs = n => Math.max(0, Math.round((n.kcal - n.protein * 4 - n.fat * 9) / 4 / 10) * 10);
+
+// ---------- Mensa (Nutreetion Lab) ----------
+// mensa.json lo scrive ogni lunedì l'automazione su GitHub (tools/mensa.mjs): calorie e macro sono stime dagli ingredienti.
+const monday = k => addDays(k, -((parseDay(k).getDay() + 6) % 7));
+// Il menu vale per la settimana in cui è stato letto l'ultima volta.
+export function mensaFor(menu, day = dayKey()) {
+  const ref = menu?.checked || menu?.updated;
+  if (!ref || !menu.dishes?.length) return null;
+  return monday(dayKey(new Date(ref))) === monday(day) ? menu : null;
+}
+export const proteinIndex = d => d.kcal ? d.p * 100 / d.kcal : 0;   // g di proteine ogni 100 kcal
+export const mensaGrade = d => !d.kcal ? null : d.f >= 30 ? 'da evitare' : proteinIndex(d) >= 6 ? 'ottimo' : proteinIndex(d) >= 4 ? 'buono' : 'da evitare';
+// Piatti consigliati, il migliore per primo. Regole del personal trainer: almeno 30 g di proteine, grassi sotto 30 g,
+// indice proteico ≥ 4; nel giorno di allenamento conta anche avere più carboidrati, a riposo solo le proteine.
+export function mensaRank(menu, training) {
+  const all = (menu?.dishes || []).filter(d => d.kcal > 0);
+  const strict = all.filter(d => d.p >= 30 && d.f < 30 && proteinIndex(d) >= 4);
+  const pool = strict.length ? strict : all.filter(d => proteinIndex(d) >= 4);
+  const score = d => proteinIndex(d) + (training ? d.c / 15 : 0);
+  return (pool.length ? pool : all).slice().sort((a, b) => score(b) - score(a));
+}
+export const isOfficeDay = (state, day) => (state.settings.office || [1, 2, 3, 4, 5]).includes(parseDay(day).getDay());

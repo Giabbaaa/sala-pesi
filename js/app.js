@@ -41,6 +41,23 @@ try {
 }
 if (loadNotice) state.notice = loadNotice;
 state.meta = state.meta || {};
+// Menu della mensa: copia sul telefono per vederlo anche offline (non fa parte dei dati degli allenamenti)
+const MENSA_KEY = 'salapesi.mensa';
+let mensa = null;
+try { mensa = JSON.parse(localStorage.getItem(MENSA_KEY)); } catch {}
+let mensaAt = 0;
+async function loadMensa() {
+  if (Date.now() - mensaAt < 10 * 60000) return;
+  mensaAt = Date.now();
+  try {
+    const r = await fetch('mensa.json', { cache: 'no-store' });
+    if (!r.ok) return;
+    const m = await r.json(), changed = JSON.stringify(m) !== JSON.stringify(mensa);
+    mensa = m;
+    try { localStorage.setItem(MENSA_KEY, JSON.stringify(m)); } catch {}
+    if (changed && !ui.sheet && !document.activeElement?.matches?.('input, textarea')) render();
+  } catch {}
+}
 let ui = { tab: 'oggi', day: null, editSet: null, confirmReset: false, flash: null, flashEx: null, flashSeg: null, flashDone: false };
 function save() {
   const txt = JSON.stringify(state);
@@ -132,6 +149,7 @@ async function keepAwake(on) {
     if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
   } catch { wakeLock = null; }
 }
+document.addEventListener('visibilitychange', () => { if (!document.hidden) loadMensa(); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && state.current?.view === 'ex') keepAwake(true); tickTimer(); ghBackup({ every: document.hidden ? 3 : 10 }); });
 
 // ---------- Timer di recupero ----------
@@ -918,12 +936,35 @@ function nutriCard(t) {
   const planned = !hasLogs(cur) && ((cur && cur.forced) || (rec[0] === t && state.skipDay !== t)) ? (cur?.minutes || E.usualMinutes(state)) : 0;
   const d = E.dayNutrition(state, t, planned);
   const kc = d.status === 'fatto' ? d.total : d.base;
-  return `<section class="card nutri"><h3>Alimentazione</h3>
+  return `<section class="card nutri"><h3>Alimentazione</h3>${mensaLine(t, d.status !== 'riposo')}
     <div class="summary"><span><b>${thousands(kc)}</b> kcal</span><span><b>${n.protein}</b> g proteine</span><span><b>${d.carbsBase + (d.status === 'fatto' ? d.carbsExtra : 0)}</b> g carbo</span><span><b>${n.fat}</b> g grassi</span></div>
     <p class="small muted">${d.status === 'fatto' ? `${thousands(d.base)} di base + ${d.extra} kcal dell’allenamento, in carboidrati.`
       : d.status === 'previsto' ? `<b class="t-ok">+ ${d.extra} kcal dopo l’allenamento</b>, circa ${d.carbsExtra} g di carboidrati. Se salti la seduta, non servono.` : 'Giorno di riposo: solo la base.'}</p>
     ${n.last ? `<p class="small" style="margin-top:6px"><b>Ultima modifica:</b> ${esc(n.last)}</p>` : ''}
   </section>`;
+}
+// Consiglio per il pranzo in mensa, nei giorni d'ufficio della settimana del menu
+function mensaLine(t, training) {
+  const m = E.mensaFor(mensa, t);
+  if (!m || !E.isOfficeDay(state, t)) return '';
+  const [a, b] = E.mensaRank(m, training);
+  if (!a) return '';
+  const info = x => `${x.kcal} kcal · ${x.p} g proteine`;
+  return `<div class="mensa"><div><span class="muted">Mensa:</span> ordina <b>${esc(a.name)}</b></div>
+    <div class="small muted">${info(a)}${b ? ` · oppure ${esc(b.name)}, ${info(b)}` : ''}</div>
+    <button class="link small" data-act="mensa-open">Menu della settimana</button></div>`;
+}
+function mensaSheet() {
+  const m = mensa, rank = d => ({ ottimo: 0, buono: 1, 'da evitare': 2 })[E.mensaGrade(d)] ?? 3,
+    list = (m?.dishes || []).slice().sort((x, y) => rank(x) - rank(y) || E.proteinIndex(y) - E.proteinIndex(x));
+  const cls = { ottimo: 't-ok', buono: 't-warn', 'da evitare': 't-bad' };
+  return `<div class="sheet-bg" data-act="sheet-close"></div>
+    <div class="sheet-card" role="dialog" aria-modal="true" aria-label="Menu della mensa">
+      <div class="row between" style="align-items:flex-start"><h3>Menu della settimana</h3><button class="icon ghost" data-act="sheet-close" aria-label="Chiudi">✕</button></div>
+      <div class="mensa-list">${list.map(d => { const g = E.mensaGrade(d); return `<div class="mensa-row"><div class="row between"><b>${esc(d.name)}</b>${g ? `<span class="small ${cls[g]}">${g}</span>` : ''}</div>
+        <div class="small muted">${d.kcal ? `${d.kcal} kcal · P ${d.p} · C ${d.c} · G ${d.f} g` : 'valori non disponibili'}</div></div>`; }).join('')}</div>
+      <p class="small muted" style="margin-top:10px">Valori stimati dagli ingredienti del sito: possono sbagliare del 10–20%.</p>
+    </div>`;
 }
 function viewCibo() {
   const n = state.nutrition; const w = state.body.weights; const t = today();
@@ -954,6 +995,8 @@ function viewImpostazioni() {
       <p class="small muted" style="margin-top:6px">${soundMode() === 'loud' ? 'Suona anche con l’iPhone in silenzioso, ma può mettere in pausa la musica.' : soundMode() === 'on' ? 'Si sente sopra la musica, ma non con l’iPhone in silenzioso.' : 'A fine recupero il timer diventa verde, senza suono.'} Con lo schermo spento non suona.</p></div>
     ${soundMode() === 'off' ? '' : '<button class="ghost" style="align-self:flex-start" data-act="sound-test">▶︎ Prova il suono</button>'}
   </section>
+  <h2>Giorni in mensa</h2><section class="card"><div class="chips">${[1, 2, 3, 4, 5].map(v => `<button class="${(s.office || [1, 2, 3, 4, 5]).includes(v) ? 'on' : ''}" data-act="office" data-v="${v}">${E.DAY_NAMES[v].slice(0, 3)}</button>`).join('')}</div>
+    <p class="small muted" style="margin-top:8px">In questi giorni Oggi ti consiglia cosa ordinare dal menu Nutreetion Lab.</p></section>
   <h2>Dischi disponibili</h2><section class="card"><div class="chips">${[25, 20, 15, 10, 5, 2.5, 1.25].map(p => `<button class="${s.plates.includes(p) ? 'on' : ''}" data-act="plate" data-v="${p}">${kg(p)} kg</button>`).join('')}</div>
     <p class="small muted" style="margin-top:8px">Per gli attrezzi a dischi l’app ti dice cosa mettere per lato.</p></section>
   <h2>Dati e backup</h2><section class="card stack">
@@ -965,7 +1008,7 @@ function viewImpostazioni() {
         <button class="ghost" data-act="snap" data-k="${x.k}">${ui.confirmSnap === x.k ? 'Conferma' : 'Ripristina'}</button></div>`; }).join('')}` : ''}
     <button class="danger" style="margin-top:14px" data-act="reset">${ui.confirmReset ? 'Tocca di nuovo per cancellare tutto' : 'Cancella tutti i dati'}</button>
   </section>
-  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.13 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.14 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
 }
 
 // ---------- Render ----------
@@ -1053,6 +1096,10 @@ function renderSheet(force = false) {
         <button class="big ghost" data-act="sheet-close">Annulla</button>
       </div>`;
     el.hidden = false; return;
+  }
+  if (ui.sheet === 'mensa' && mensa) {
+    if (el.dataset.id === 'mensa' && !el.hidden && !force) return;
+    el.dataset.id = 'mensa'; el.innerHTML = mensaSheet(); el.hidden = false; return;
   }
   if (ui.sheet === 'fretta') {
     if (el.dataset.id === 'fretta' && !el.hidden) return;
@@ -1181,6 +1228,8 @@ document.addEventListener('click', ev => {
       state.current = E.compose(state, today(), Date.now(), v); state.current.forced = f; save(); return render();
     }
     case 'fretta-open': ui.sheet = 'fretta'; return renderSheet();
+    case 'mensa-open': ui.sheet = 'mensa'; return renderSheet();
+    case 'office': { const v = +el.dataset.v, o = state.settings.office || [1, 2, 3, 4, 5]; state.settings.office = o.includes(v) ? o.filter(x => x !== v) : [...o, v].sort(); return rerender(); }
     case 'fretta': {
       closeSheet(); if (!c) return;
       E.trimPlan(state, c, +el.dataset.v);
@@ -1475,6 +1524,7 @@ for (const type of ['touchend', 'touchcancel']) document.addEventListener(type, 
 }
 if (state.current?.view === 'ex') keepAwake(true);
 render();
+loadMensa();
 setTimeout(() => ghBackup(), 2000);
 // Aggiorna la vista al cambio di giorno o al ritorno nell'app
 let lastDay = today();
