@@ -1,0 +1,16 @@
+name: Menu mensa
+on:
+  schedule:
+    - cron: '0 5 * * 1'   # ogni lunedì alle 6 (ora italiana d'inverno)
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  menu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node tools/mensa-debug.mjs
