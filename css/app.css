@@ -419,11 +419,7 @@ button.back { padding: 4px 2px; font-weight: 600; }
 .menu-card { display: flex; flex-direction: column; gap: 8px; }
 .menu-card button.danger { color: var(--bad); font-weight: 600; }
 
-/* Mensa */
-.mensa-list { margin-top: 10px; display: grid; gap: 8px; max-height: 60vh; overflow: auto; }
-.mensa-row { padding: 8px 0; border-bottom: 1px solid var(--line, rgba(127,127,127,.2)); }
-.mensa-row:last-child { border-bottom: 0; }
-
+/* Lista per scegliere un pasto */
 /* Menu del giorno */
 .meals { margin-top: 12px; border-top: 1px solid var(--line); }
 .meal { padding: 10px 0; border-bottom: 1px solid var(--line); }
@@ -431,3 +427,10 @@ button.back { padding: 4px 2px; font-weight: 600; }
 .meal .small:not(.muted):not(.t-ok) { margin-top: 2px; line-height: 1.35; }
 .meal-acts { margin-top: 8px; align-items: center; }
 .meal-acts .link { margin-left: 6px; }
+.choose-list { margin-top: 8px; max-height: 62vh; overflow: auto; -webkit-overflow-scrolling: touch; display: grid; gap: 6px; }
+.choose-sec { margin: 10px 0 2px; text-transform: uppercase; letter-spacing: .04em; }
+button.choice { display: block; width: 100%; text-align: left; padding: 10px 12px; border-radius: 12px; background: var(--card2); color: var(--text); font-weight: 400; min-height: 0; }
+button.choice b { font-weight: 600; }
+button.choice.on { box-shadow: inset 0 0 0 2px var(--accent); }
+button.choice .row { gap: 8px; align-items: flex-start; }
+button.choice .row > span { flex: none; }

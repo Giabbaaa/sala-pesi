@@ -951,17 +951,33 @@ function menuFor(t, d = dayNut(t)) {
 function menuHtml(t, d) {
   const r = menuFor(t, d);
   const row = x => {
-    const text = x.text ? esc(x.text) : x.items.map(M.itemText).map(esc).join(' + ');
-    const tag = x.mensa ? ' <span class="small t-ok">mensa</span>' : x.out ? ' <span class="small muted">fuori</span>' : '';
+    const text = x.choose ? `<button class="link" data-act="meal-choose" data-day="${t}" data-meal="${x.key}">Scegli</button>`
+      : x.text ? esc(x.text) : x.items.map(M.itemText).map(esc).join(' + ');
+    const tag = x.choose ? '' : x.mensa ? ' <span class="small t-ok">mensa</span>' : x.out ? ' <span class="small muted">fuori</span>' : '';
     return `<div class="meal" data-lp="meal" data-meal="${x.key}" data-day="${t}">
-      <div class="row between"><b>${x.label}${tag}</b><span class="small muted">${x.v[0]} kcal · ${x.v[1]} g</span></div>
+      <div class="row between"><b>${x.label}${tag}</b>${x.choose ? '' : `<span class="small muted">${x.v[0]} kcal · ${x.v[1]} g</span>`}</div>
       <div class="small">${text}</div>
-      ${x.mensa ? `<div class="chips meal-acts">${x.ordered ? `<button class="on" data-act="meal-order" data-day="${t}">✓ Ordinato</button>` : `<button data-act="meal-order" data-day="${t}">Ordinato</button>`}
-        <button class="link small" data-act="mensa-open">Menu della settimana</button></div>` : ''}
     </div>`;
   };
   return `<div class="meals">${r.meals.map(row).join('')}</div>
-    <p class="small muted" style="margin-top:8px">In tutto circa ${thousands(Math.round(r.total[0] / 10) * 10)} kcal e ${r.total[1]} g di proteine. Tieni premuto un pasto per cambiarlo.</p>`;
+    <p class="small muted" style="margin-top:8px">In tutto circa ${thousands(Math.round(r.total[0] / 10) * 10)} kcal e ${r.total[1]} g di proteine. Tieni premuto un pasto per sceglierlo dalla lista.</p>`;
+}
+// Lista delle possibilità di un pasto: tocco per scegliere, tocco di nuovo sulla stessa per togliere la scelta
+function chooseSheet() {
+  const { day, meal } = ui.choose, d = dayNut(day), n = state.nutrition;
+  const target = { kcal: d.status === 'riposo' ? d.base : d.total, protein: n.protein, fat: n.fat, training: d.status !== 'riposo' };
+  const secs = M.mealOptions(state, day, target, mensa, meal);
+  const label = { colazione: 'Colazione', pranzo: 'Pranzo', merenda: 'Merenda', cena: 'Cena' }[meal];
+  const cls = { ottimo: 't-ok', buono: 't-warn', 'da evitare': 't-bad' };
+  const item = x => `<button class="choice ${x.chosen ? 'on' : ''}" data-act="meal-pick" data-day="${day}" data-meal="${meal}" data-id="${esc(x.id)}">
+      <div class="row between"><b>${esc(x.title || x.sub)}</b><span class="small">${x.chosen ? '✓' : x.rec ? '<span class="t-ok">consigliato</span>' : x.grade ? `<span class="${cls[x.grade]}">${x.grade}</span>` : ''}</span></div>
+      <div class="small muted">${x.title ? esc(x.sub) + (x.v ? ' · ' : '') : ''}${x.v ? `${x.v[0]} kcal · ${x.v[1]} g proteine` : ''}</div></button>`;
+  return `<div class="sheet-bg" data-act="sheet-close"></div>
+    <div class="sheet-card" role="dialog" aria-modal="true" aria-label="${label}">
+      <div class="row between" style="align-items:flex-start"><h3>${label}</h3><button class="icon ghost" data-act="sheet-close" aria-label="Chiudi">✕</button></div>
+      <div class="choose-list">${secs.map(s => `${s.title ? `<p class="small muted choose-sec">${s.title}</p>` : ''}${s.items.map(item).join('')}`).join('')}</div>
+      <p class="small muted" style="margin-top:10px">Tocca per scegliere, tocca di nuovo per togliere la scelta.${meal === 'pranzo' && mensa ? ' Valori della mensa stimati dagli ingredienti.' : ''}</p>
+    </div>`;
 }
 function nutriCard(t) {
   const n = state.nutrition, d = dayNut(t);
@@ -973,18 +989,6 @@ function nutriCard(t) {
     ${t >= today() ? menuHtml(t, d) : ''}
     ${n.last ? `<p class="small" style="margin-top:6px"><b>Ultima modifica:</b> ${esc(n.last)}</p>` : ''}
   </section>`;
-}
-function mensaSheet() {
-  const m = mensa, rank = d => ({ ottimo: 0, buono: 1, 'da evitare': 2 })[E.mensaGrade(d)] ?? 3,
-    list = (m?.dishes || []).slice().sort((x, y) => rank(x) - rank(y) || E.proteinIndex(y) - E.proteinIndex(x));
-  const cls = { ottimo: 't-ok', buono: 't-warn', 'da evitare': 't-bad' };
-  return `<div class="sheet-bg" data-act="sheet-close"></div>
-    <div class="sheet-card" role="dialog" aria-modal="true" aria-label="Menu della mensa">
-      <div class="row between" style="align-items:flex-start"><h3>Menu della settimana</h3><button class="icon ghost" data-act="sheet-close" aria-label="Chiudi">✕</button></div>
-      <div class="mensa-list">${list.map(d => { const g = E.mensaGrade(d); return `<div class="mensa-row"><div class="row between"><b>${esc(d.name)}</b>${g ? `<span class="small ${cls[g]}">${g}</span>` : ''}</div>
-        <div class="small muted">${d.kcal ? `${d.kcal} kcal · P ${d.p} · C ${d.c} · G ${d.f} g` : 'valori non disponibili'}</div></div>`; }).join('')}</div>
-      <p class="small muted" style="margin-top:10px">Valori stimati dagli ingredienti del sito: possono sbagliare del 10–20%.</p>
-    </div>`;
 }
 function viewCibo() {
   const n = state.nutrition; const w = state.body.weights; const t = today();
@@ -1015,8 +1019,6 @@ function viewImpostazioni() {
       <p class="small muted" style="margin-top:6px">${soundMode() === 'loud' ? 'Suona anche con l’iPhone in silenzioso, ma può mettere in pausa la musica.' : soundMode() === 'on' ? 'Si sente sopra la musica, ma non con l’iPhone in silenzioso.' : 'A fine recupero il timer diventa verde, senza suono.'} Con lo schermo spento non suona.</p></div>
     ${soundMode() === 'off' ? '' : '<button class="ghost" style="align-self:flex-start" data-act="sound-test">▶︎ Prova il suono</button>'}
   </section>
-  <h2>Giorni in mensa</h2><section class="card"><div class="chips">${[1, 2, 3, 4, 5].map(v => `<button class="${(s.office || [1, 2, 3, 4, 5]).includes(v) ? 'on' : ''}" data-act="office" data-v="${v}">${E.DAY_NAMES[v].slice(0, 3)}</button>`).join('')}</div>
-    <p class="small muted" style="margin-top:8px">In questi giorni il pranzo proposto è quello della mensa Nutreetion Lab. Per un giorno diverso tieni premuto il pranzo.</p></section>
   <h2>Dischi disponibili</h2><section class="card"><div class="chips">${[25, 20, 15, 10, 5, 2.5, 1.25].map(p => `<button class="${s.plates.includes(p) ? 'on' : ''}" data-act="plate" data-v="${p}">${kg(p)} kg</button>`).join('')}</div>
     <p class="small muted" style="margin-top:8px">Per gli attrezzi a dischi l’app ti dice cosa mettere per lato.</p></section>
   <h2>Dati e backup</h2><section class="card stack">
@@ -1028,7 +1030,7 @@ function viewImpostazioni() {
         <button class="ghost" data-act="snap" data-k="${x.k}">${ui.confirmSnap === x.k ? 'Conferma' : 'Ripristina'}</button></div>`; }).join('')}` : ''}
     <button class="danger" style="margin-top:14px" data-act="reset">${ui.confirmReset ? 'Tocca di nuovo per cancellare tutto' : 'Cancella tutti i dati'}</button>
   </section>
-  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.15 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.16 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
 }
 
 // ---------- Render ----------
@@ -1117,9 +1119,10 @@ function renderSheet(force = false) {
       </div>`;
     el.hidden = false; return;
   }
-  if (ui.sheet === 'mensa' && mensa) {
-    if (el.dataset.id === 'mensa' && !el.hidden && !force) return;
-    el.dataset.id = 'mensa'; el.innerHTML = mensaSheet(); el.hidden = false; return;
+  if (ui.sheet === 'choose' && ui.choose) {
+    const sid = `choose:${ui.choose.day}:${ui.choose.meal}`;
+    if (el.dataset.id === sid && !el.hidden && !force) return;
+    el.dataset.id = sid; el.innerHTML = chooseSheet(); el.hidden = false; return;
   }
   if (ui.sheet === 'fretta') {
     if (el.dataset.id === 'fretta' && !el.hidden) return;
@@ -1248,19 +1251,18 @@ document.addEventListener('click', ev => {
       state.current = E.compose(state, today(), Date.now(), v); state.current.forced = f; save(); return render();
     }
     case 'fretta-open': ui.sheet = 'fretta'; return renderSheet();
-    case 'mensa-open': ui.sheet = 'mensa'; return renderSheet();
-    case 'meal-alt': case 'meal-plus': case 'meal-where': case 'meal-order': {
-      const t = el.dataset.day, m = state.meals, alt = (m.alt[t] = m.alt[t] || {});
-      if (a === 'meal-alt') alt[el.dataset.meal] = (alt[el.dataset.meal] || 0) + 1;
-      if (a === 'meal-plus') alt.colazione = +el.dataset.v;
-      if (a === 'meal-where') { m.where[t] = el.dataset.v; delete alt.pranzo; }
-      if (a === 'meal-order') {
-        if (m.ordered[t]) delete m.ordered[t];
-        else { const p = menuFor(t).meals.find(x => x.key === 'pranzo'); if (!p?.dish) return; const { id, name, kcal, p: pr, c: cb, f } = p.dish; m.ordered[t] = { id, name, kcal, p: pr, c: cb, f }; m.where[t] = 'mensa'; }
+    case 'meal-choose': ui.choose = { day: el.dataset.day, meal: el.dataset.meal }; ui.sheet = 'choose'; return renderSheet();
+    case 'meal-pick': {
+      const t = el.dataset.day, key = el.dataset.meal, id = el.dataset.id, all = state.meals.pick;
+      const p = (all[t] = all[t] || {});
+      if (p[key] === id) { delete p[key]; if (key === 'pranzo') delete p.dish; }
+      else {
+        p[key] = id;
+        if (key === 'pranzo') { const d = id.startsWith('m:') && mensa?.dishes.find(x => 'm:' + x.id === id); if (d) { const { id: di, name, kcal, p: pr, c: cb, f } = d; p.dish = { id: di, name, kcal, p: pr, c: cb, f }; } else delete p.dish; }
       }
-      save(); return render();
+      if (!Object.keys(p).length) delete all[t];
+      closeSheet(); save(); return render();
     }
-    case 'office': { const v = +el.dataset.v, o = state.settings.office || [1, 2, 3, 4, 5]; state.settings.office = o.includes(v) ? o.filter(x => x !== v) : [...o, v].sort(); return rerender(); }
     case 'fretta': {
       closeSheet(); if (!c) return;
       E.trimPlan(state, c, +el.dataset.v);
@@ -1460,17 +1462,9 @@ function lpMenu(el) {
       if (x.plates || state.settings.ex[it.id]?.plates === false) items.push({ act: 'lp-plates', label: x.plates ? `Dischi · peso a vuoto ${kg(x.base)} kg` : 'Dischi · non usati', attrs: `data-id="${it.id}"` });
     }
     if (!logged(it).length) items.push({ act: 'ov-del', label: 'Togli dalla seduta', danger: true, attrs: `data-i="${el.dataset.i}"` });
-  } else if (k === 'meal') {
-    const t = el.dataset.day, key = el.dataset.meal, r = menuFor(t), x = r.meals.find(m => m.key === key); if (!x) return false;
-    const at = `data-day="${t}" data-meal="${key}"`;
-    title = x.label;
-    if (key === 'colazione') items.push({ act: 'meal-plus', label: x.items.length > 3 ? 'Colazione semplice' : 'Colazione rinforzata (+ 15 g di whey)', attrs: `${at} data-v="${x.items.length > 3 ? 0 : 1}"` });
-    else if (!x.ordered) items.push({ act: 'meal-alt', label: 'Un’altra proposta', attrs: at });
-    if (key === 'pranzo') {
-      if (x.ordered) items.push({ act: 'meal-order', label: 'Non l’ho ordinato', attrs: at });
-      else if (x.mensa) items.push({ act: 'meal-where', label: 'Pranzo a casa o fuori', attrs: `${at} data-v="casa"` });
-      else if (r.hasMensa) items.push({ act: 'meal-where', label: 'Pranzo in mensa', attrs: `${at} data-v="mensa"` });
-    }
+  } else if (k === 'meal') {   // pressione lunga su un pasto: la lista da cui sceglierlo
+    ui.choose = { day: el.dataset.day, meal: el.dataset.meal }; ui.sheet = 'choose'; ui.longAt = Date.now(); renderSheet();
+    return true;
   } else if (k === 'plan') {
     if (!c) return false;
     const isToday = c.date === today();

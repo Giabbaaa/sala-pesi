@@ -1,6 +1,6 @@
-// Menu del giorno: colazione, pranzo, pomeriggio e cena che insieme arrivano a calorie e proteine del giorno.
+// Menu del giorno: colazione, pranzo, merenda e cena che insieme arrivano a calorie e proteine del giorno.
 // Solo suggerimenti: i pasti veri si registrano in Yazio. La cena "chiude i conti" (grammature calcolate).
-import { addDays, parseDay, dayKey, mensaFor, mensaRank, isOfficeDay } from './engine.js';
+import { addDays, parseDay, dayKey, mensaFor, mensaRank, mensaGrade, proteinIndex, isOfficeDay } from './engine.js';
 
 // Valori per 100 g: [kcal, proteine, carboidrati, grassi]. pc/unit: si mostra a pezzi (fette, uova).
 export const FOOD = {
@@ -32,38 +32,44 @@ export const FOOD = {
   olio: { name: 'olio', v: [900, 0, 0, 100] },
   poke: { name: 'poke con salmone o pollo, senza salse', v: [600, 35, 70, 18], dish: true },
   panino: { name: 'panino con bresaola o pollo + 1 frutto', v: [480, 30, 62, 10], dish: true },
+  insalatona: { name: 'insalatona con pollo o tonno e uova + pane', v: [520, 38, 40, 22], dish: true },
 };
 
 // Colazione di Giabba (24/11): vasetto di yogurt greco 150 g + 15 g muesli proteico + 15 g fiocchi di soia.
 const COLAZIONE = [['yogurt', 150], ['muesli', 15], ['soia', 15]];
 const COLAZIONE_PLUS = [...COLAZIONE, ['whey', 15]];               // "rinforzata": whey mescolata nello yogurt
 
-const POMERIGGIO = [
-  [['whey', 30], ['banana', 120]],
-  [['whey', 30], ['mandorle', 20]],
-  [['whey', 30], ['frutto', 150]],
-  [['quark', 250], ['frutto', 150]],
+// Merende (id stabili: la lista si può allungare, mai rinumerare)
+const MERENDE = [
+  { id: 'whey-banana', name: 'Whey e banana', items: [['whey', 30], ['banana', 120]] },
+  { id: 'whey-mandorle', name: 'Whey e mandorle', items: [['whey', 30], ['mandorle', 20]] },
+  { id: 'whey-frutto', name: 'Whey e frutto', items: [['whey', 30], ['frutto', 150]] },
+  { id: 'yogurt-frutto', name: 'Yogurt greco e frutto', items: [['yogurt', 150], ['frutto', 150]] },
+  { id: 'quark-frutto', name: 'Quark e frutto', items: [['quark', 250], ['frutto', 150]] },
+  { id: 'wasa-bresaola', name: 'Wasa e bresaola', items: [['wasa', 18], ['bresaola', 50]] },
+  { id: 'frutto-noci', name: 'Frutto e noci', items: [['frutto', 150], ['noci', 15]] },
 ];
 
 // Pranzi a casa o fuori: porzioni fisse
 const PRANZI = [
-  { items: [['pasta', 90], ['tonno', 120], ['verdure', 200], ['olio', 10]] },
-  { items: [['wasa', 36], ['bresaola', 80], ['fiocchiLatte', 200], ['verdure', 200], ['olio', 10]] },
-  { items: [['tartare', 200], ['patate', 250], ['verdure', 200], ['olio', 10]] },
-  { items: [['riso', 80], ['pollo', 150], ['verdure', 200], ['olio', 10]] },
-  { out: true, items: [['poke', 100]] },
-  { out: true, items: [['panino', 100]] },
+  { id: 'pasta-tonno', name: 'Pasta al tonno', items: [['pasta', 90], ['tonno', 120], ['verdure', 200], ['olio', 10]] },
+  { id: 'wasa-bresaola', name: 'Wasa, bresaola e fiocchi di latte', items: [['wasa', 36], ['bresaola', 80], ['fiocchiLatte', 200], ['verdure', 200], ['olio', 10]] },
+  { id: 'tartare-patate', name: 'Tartare e patate', items: [['tartare', 200], ['patate', 250], ['verdure', 200], ['olio', 10]] },
+  { id: 'riso-pollo', name: 'Riso e pollo', items: [['riso', 80], ['pollo', 150], ['verdure', 200], ['olio', 10]] },
+  { id: 'poke', name: 'Poke, fuori', out: true, items: [['poke', 100]] },
+  { id: 'panino', name: 'Panino, fuori', out: true, items: [['panino', 100]] },
+  { id: 'insalatona', name: 'Insalatona, fuori', out: true, items: [['insalatona', 100]] },
 ];
 
 // Cene: la proteina e i carboidrati si adattano a quanto manca. carb: [allenamento, riposo]
 // L'olio (oil) si adatta ai grassi che mancano per arrivare al minimo del giorno.
 const CENE = [
-  { prot: ['pollo', 150, 300], carb: [['pasta', 60, 150], ['pane', 50, 130]], fixed: [['verdure', 200]], oil: [5, 20] },
-  { prot: ['salmone', 100, 175], carb: [['riso', 60, 150], ['wasa', 18, 72]], fixed: [['carneSalata', 50], ['verdure', 200]], oil: [0, 15] },
-  { prot: ['tartare', 150, 300], carb: [['pasta', 60, 150], ['patate', 150, 400]], fixed: [['verdure', 200]], oil: [5, 20] },
-  { prot: ['pesce', 200, 400], carb: [['riso', 60, 150], ['patate', 150, 400]], fixed: [['verdure', 200]], oil: [10, 20] },
-  { prot: ['albume', 100, 300], carb: [['pane', 50, 150], ['pane', 50, 130]], fixed: [['uova', 120], ['verdure', 200]], oil: [5, 20] },
-  { prot: ['quark', 150, 300], carb: [['pane', 50, 130], ['wasa', 18, 72]], fixed: [['salmone', 100], ['verdure', 200]], oil: [0, 15] },
+  { id: 'pollo', name: 'Pollo o tacchino', prot: ['pollo', 150, 300], carb: [['pasta', 60, 150], ['pane', 50, 130]], fixed: [['verdure', 200]], oil: [5, 20] },
+  { id: 'salmone', name: 'Salmone crudo e carne salata', prot: ['salmone', 100, 175], carb: [['riso', 60, 150], ['wasa', 18, 72]], fixed: [['carneSalata', 50], ['verdure', 200]], oil: [0, 15] },
+  { id: 'tartare', name: 'Tartare di scottona', prot: ['tartare', 150, 300], carb: [['pasta', 60, 150], ['patate', 150, 400]], fixed: [['verdure', 200]], oil: [5, 20] },
+  { id: 'pesce', name: 'Pesce bianco', prot: ['pesce', 200, 400], carb: [['riso', 60, 150], ['patate', 150, 400]], fixed: [['verdure', 200]], oil: [10, 20] },
+  { id: 'uova', name: 'Uova e albumi', prot: ['albume', 100, 300], carb: [['pane', 50, 150], ['pane', 50, 130]], fixed: [['uova', 120], ['verdure', 200]], oil: [5, 20] },
+  { id: 'quark', name: 'Quark e salmone', prot: ['quark', 150, 300], carb: [['pane', 50, 130], ['wasa', 18, 72]], fixed: [['salmone', 100], ['verdure', 200]], oil: [0, 15] },
 ];
 
 const sum = items => items.reduce((t, [k, g]) => { const v = FOOD[k].v; return t.map((x, i) => x + v[i] * g / 100); }, [0, 0, 0, 0]);
@@ -96,65 +102,93 @@ function dinner(tpl, training, needK, needP, needF) {
 }
 
 const meal = (key, label, items, extra = {}) => ({ key, label, items, v: sum(items).map(Math.round), ...extra });
+const tot = list => list.reduce((t, x) => t.map((y, i) => y + x.v[i]), [0, 0, 0, 0]);
+const mensaMeal = (d, extra = {}) => ({ key: 'pranzo', label: 'Pranzo', mensa: true, dish: d, text: `${d.name} + 1 frutto`, v: [d.kcal + 78, d.p, d.c + 21, d.f].map(Math.round), ...extra });
 
-// Il menu di un giorno. target: { kcal, protein, training }. mensaMenu: il contenuto di mensa.json (o null).
-export function dayMenu(state, day, target, mensaMenu) {
-  const m = state.meals || {}, alt = m.alt?.[day] || {}, n = dayNum(day);
+// Il menu di un giorno. target: { kcal, protein, fat, training }. mensaMenu: il contenuto di mensa.json (o null).
+// Le scelte di Giabba stanno in state.meals.pick[giorno]: { colazione, pranzo ('m:<id>' mensa | id), dish, merenda, cena }.
+// over: scelte provvisorie (per mostrare nella lista come verrebbe ogni possibilità).
+export function dayMenu(state, day, target, mensaMenu, over = {}) {
+  const pick = { ...(state.meals?.pick?.[day] || {}), ...over }, n = dayNum(day);
   const training = !!target.training;
-
-  // Pranzo: mensa nei giorni d'ufficio (se c'è il menu della settimana), altrimenti a casa o fuori
-  let pranzo;
-  const ordered = m.ordered?.[day];
-  const where = m.where?.[day] || (isOfficeDay(state, day) ? 'mensa' : 'casa');
   const menu = mensaFor(mensaMenu, day);
-  if (ordered || (where === 'mensa' && menu)) {
-    const ranked = menu ? mensaRank(menu, training) : [];
-    const d = ordered || ranked[(alt.pranzo || 0) % Math.max(1, Math.min(3, ranked.length))];
-    if (d) {
-      const v = [d.kcal + 78, d.p, d.c + 21, d.f];   // + 1 frutto
-      pranzo = { key: 'pranzo', label: 'Pranzo', mensa: true, ordered: !!ordered, dish: d, text: `${d.name} + 1 frutto`, v: v.map(Math.round) };
-    }
+
+  // Pranzo: quello scelto; se non c'è, si fanno i conti con il consigliato e la scheda mostra "Scegli"
+  let pranzo = null;
+  if (pick.pranzo?.startsWith('m:')) {
+    const d = (pick.dish && 'm:' + pick.dish.id === pick.pranzo) ? pick.dish : menu?.dishes.find(x => 'm:' + x.id === pick.pranzo);
+    if (d) pranzo = mensaMeal(d, { chosen: true });
+  } else if (pick.pranzo) {
+    const p = PRANZI.find(x => x.id === pick.pranzo);
+    if (p) pranzo = meal('pranzo', 'Pranzo', p.items, { out: p.out, chosen: true });
   }
   if (!pranzo) {
-    const p = PRANZI[(n + (alt.pranzo || 0)) % PRANZI.length];
-    pranzo = meal('pranzo', 'Pranzo', p.items, { out: p.out });
+    const best = menu && isOfficeDay(state, day) ? mensaRank(menu, training)[0] : null;
+    const p = PRANZI[n % PRANZI.length];
+    pranzo = best ? mensaMeal(best, { choose: true }) : meal('pranzo', 'Pranzo', p.items, { out: p.out, choose: true });
   }
 
-  const pomItems = POMERIGGIO[((training ? 0 : 1) + (alt.pomeriggio || 0)) % POMERIGGIO.length];
-  // la cena non ripete la proteina del pranzo
-  const lunchFoods = new Set((pranzo.items || []).map(x => x[0]));
-  let ci = n + (alt.cena || 0);
-  for (let i = 0; i < CENE.length && lunchFoods.has(CENE[ci % CENE.length].prot[0]); i++) ci++;
-  const cena = CENE[ci % CENE.length];
+  const mer = MERENDE.find(x => x.id === pick.merenda);
+  const merItems = (mer || MERENDE[training ? 0 : 1]).items;
+  // cena scelta, oppure a rotazione senza ripetere la proteina del pranzo
+  let cena = CENE.find(x => x.id === pick.cena);
+  if (!cena) {
+    const lunchFoods = new Set((pranzo.items || []).map(x => x[0]));
+    let ci = n;
+    for (let i = 0; i < CENE.length && lunchFoods.has(CENE[ci % CENE.length].prot[0]); i++) ci++;
+    cena = CENE[ci % CENE.length];
+  }
   const fat = target.fat || 60;
 
-  const tot = list => list.reduce((t, x) => t.map((y, i) => y + x.v[i]), [0, 0, 0, 0]);
   const build = (plus, extra = []) => {
-    const col = meal('colazione', 'Colazione', plus ? COLAZIONE_PLUS : COLAZIONE);
-    const pom = meal('pomeriggio', 'Pomeriggio', [...pomItems, ...extra]);
-    const before = tot([col, pranzo, pom]);
-    const din = meal('cena', 'Cena', dinner(cena, training, target.kcal - before[0], target.protein - before[1], fat - before[3]));
-    const meals = [col, pranzo, pom, din];
+    const col = meal('colazione', 'Colazione', plus ? COLAZIONE_PLUS : COLAZIONE, { chosen: pick.colazione != null });
+    const mer2 = meal('merenda', 'Merenda', [...merItems, ...extra], { chosen: !!mer });
+    const before = tot([col, pranzo, mer2]);
+    const din = meal('cena', 'Cena', dinner(cena, training, target.kcal - before[0], target.protein - before[1], fat - before[3]), { chosen: !!pick.cena, id: cena.id });
+    const meals = [col, pranzo, mer2, din];
     return { meals, total: tot(meals).map(Math.round) };
   };
-  // Colazione rinforzata quando le proteine non bastano (o se scelta per oggi)
-  const plus = alt.colazione != null ? alt.colazione % 2 === 1 : build(false).total[1] < target.protein - 8;
+  // Colazione rinforzata quando le proteine non bastano (o se scelta)
+  const plus = pick.colazione != null ? pick.colazione === 'rinforzata' : build(false).total[1] < target.protein - 8;
   let r = build(plus);
-  // la cena è al massimo e mancano ancora calorie: un frutto e, se serve, qualche fetta di Wasa nel pomeriggio
-  if (r.total[0] < target.kcal - 120) r = build(plus, [['frutto', 150]]);
+  // la cena è al massimo e mancano ancora calorie: un frutto in più a merenda (se non l'hai scelta tu), poi pane a cena
+  if (!mer && r.total[0] < target.kcal - 120) r = build(plus, [['frutto', 150]]);
   const short = target.kcal - r.total[0];
-  if (short > 90) {   // ancora poco: pane a cena (o un frutto, se il pane c'è già)
+  if (short > 90) {
     const din = r.meals[3], hasPane = din.items.some(x => x[0] === 'pane');
     const add = hasPane ? ['frutto', 150] : ['pane', clamp(round(short / 2.6, 10), 30, 80)];
-    r.meals[3] = meal('cena', 'Cena', [...din.items, add]);
+    r.meals[3] = { ...din, ...meal('cena', 'Cena', [...din.items, add]), chosen: din.chosen, id: din.id };
     r.total = tot(r.meals).map(Math.round);
   }
-  return { ...r, training, where: ordered ? 'mensa' : pranzo.mensa ? 'mensa' : where, hasMensa: !!menu };
+  return { ...r, training, hasMensa: !!menu };
+}
+
+// Le possibilità di un pasto, ognuna con i numeri che avrebbe se scelta (la cena con le grammature del giorno)
+export function mealOptions(state, day, target, mensaMenu, key) {
+  const cur = state.meals?.pick?.[day]?.[key];
+  const one = (id, over, title) => {
+    const x = dayMenu(state, day, target, mensaMenu, over).meals.find(m => m.key === key);
+    return { id, title, sub: x.text || x.items.map(itemText).join(' + '), v: x.v, chosen: cur === id };
+  };
+  if (key === 'colazione') return [{ title: '', items: [one('semplice', { colazione: 'semplice' }, 'Semplice'), one('rinforzata', { colazione: 'rinforzata' }, 'Rinforzata, con 15 g di whey')] }];
+  if (key === 'merenda') return [{ title: '', items: MERENDE.map(x => one(x.id, { merenda: x.id }, x.name)) }];
+  if (key === 'cena') return [{ title: '', items: CENE.map(x => one(x.id, { cena: x.id }, x.name)) }];
+  const out = [];
+  const menu = mensaFor(mensaMenu, day);
+  if (menu) {
+    const rec = new Set(mensaRank(menu, !!target.training).slice(0, 2).map(d => d.id));
+    const order = d => (rec.has(d.id) ? 0 : 1) * 10 + ({ ottimo: 0, buono: 1, 'da evitare': 2 }[mensaGrade(d)] ?? 3);
+    const ds = menu.dishes.slice().sort((a, b) => order(a) - order(b) || proteinIndex(b) - proteinIndex(a));
+    out.push({ title: 'Mensa', items: ds.map(d => ({ id: 'm:' + d.id, title: d.name, sub: d.kcal ? `${d.kcal} kcal · P ${d.p} · C ${d.c} · G ${d.f} g` : 'valori non disponibili',
+      v: null, chosen: cur === 'm:' + d.id, rec: rec.has(d.id), grade: mensaGrade(d), dish: d })) });
+  }
+  out.push({ title: 'A casa o fuori', items: PRANZI.map(p => ({ ...one(p.id, { pranzo: p.id }, p.name), out: p.out })) });
+  return out;
 }
 
 // Scelte vecchie di più di 2 settimane: via
 export function pruneMeals(state, today = dayKey()) {
-  const m = state.meals; if (!m) return;
+  const m = state.meals; if (!m?.pick) return;
   const old = addDays(today, -14);
-  for (const k of ['alt', 'where', 'ordered']) for (const d of Object.keys(m[k] || {})) if (d < old) delete m[k][d];
+  for (const d of Object.keys(m.pick)) if (d < old) delete m.pick[d];
 }
