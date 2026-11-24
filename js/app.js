@@ -56,7 +56,9 @@ function save() {
 if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
 
 const today = () => E.dayKey();
-const toTop = () => { const v = document.getElementById('view'); if (v) v.scrollTop = 0; };
+// in cima alla pagina, ma solo al prossimo disegno: prima si copia la schermata vecchia per la transizione
+const toTop = () => { ui.toTop = true; };
+const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // ---------- Audio e schermo acceso ----------
 // Due modi: "sì" usa l'audio web (si mescola alla musica, ma l'iPhone in silenzioso lo zittisce);
@@ -135,22 +137,35 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && st
 // ---------- Timer di recupero ----------
 function startRest(sec, label) {
   if (state.current && state.current.date !== today()) return;     // giornata passata: niente recupero
-  state.rest = { end: Date.now() + sec * 1000, label, rings: 0 };
+  state.rest = { end: Date.now() + sec * 1000, total: sec, label, rings: 0 };
   save(); tickTimer();
+}
+// Il timer sparisce scendendo e sfumando (non di colpo)
+function hideTimer(el) {
+  if (el.hidden || el.classList.contains('out')) return;
+  if (reduced()) { el.hidden = true; el.dataset.h = ''; return; }
+  el.classList.add('out');
+  setTimeout(() => { if (!el.classList.contains('out')) return; el.classList.remove('out'); el.hidden = true; el.dataset.h = ''; }, 200);
 }
 function tickTimer() {
   const el = $('#timer'); const r = state.rest;
   document.body.classList.toggle('has-timer', !!r);
-  if (!r) { el.hidden = true; return; }
-  const left = Math.ceil((r.end - Date.now()) / 1000);
-  if (left <= -20) { state.rest = null; save(); el.hidden = true; document.body.classList.remove('has-timer'); return; }
+  if (!r) { hideTimer(el); return; }
+  const ms = r.end - Date.now(), left = Math.ceil(ms / 1000);
+  if (left <= -20) { state.rest = null; save(); hideTimer(el); document.body.classList.remove('has-timer'); return; }
+  if (el.classList.contains('out')) { el.classList.remove('out'); el.hidden = true; }
   el.hidden = false;
   el.classList.toggle('end', left <= 0);
   const t = Math.max(0, left);
+  // la struttura si ridisegna solo quando cambia; il numero e la barra si aggiornano al loro posto
   const html = left > 0
-    ? `<span class="t">${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}</span><span class="l">Recupero<br>${esc(r.label)}</span><button data-act="rest+">+15 s</button><button data-act="rest-skip">Salta</button>`
+    ? `<span class="t"></span><span class="l">Recupero<br>${esc(r.label)}</span><button data-act="rest+">+15 s</button><button data-act="rest-skip">Salta</button>${r.total ? '<i class="tb"><b></b></i>' : ''}`
     : `<span class="t">Vai!</span><span class="l">Recupero finito</span><button data-act="rest-skip">OK</button>`;
-  if (el.dataset.h !== html) { el.innerHTML = html; el.dataset.h = html; }   // si ridisegna solo quando cambia
+  if (el.dataset.h !== html) { el.innerHTML = html; el.dataset.h = html; }
+  if (left > 0) {
+    el.querySelector('.t').textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+    const b = el.querySelector('.tb b'); if (b) b.style.transform = `scaleX(${Math.max(0, Math.min(1, ms / (r.total * 1000)))})`;
+  }
   // la sveglia suona alla fine e si ripete due volte (ogni 4 s) finché non tocchi OK
   const rings = left > 0 ? 0 : Math.min(3, 1 + Math.floor(-left / 4));
   if ((r.rings || 0) < rings) { r.rings = rings; save(); chime(); }
@@ -161,10 +176,16 @@ setInterval(tickTimer, 250);
 let toastTimer = null;
 function toast(msg) {
   const el = $('#toast');
+  el.classList.remove('out');
+  if (!el.hidden && !reduced()) el.animate?.([{ transform: 'scale(.97)' }, { transform: 'none' }], { duration: 260, easing: 'cubic-bezier(.34,1.45,.64,1)' });
   el.innerHTML = `<span>${esc(msg)}</span>`;
   el.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, 2500);
+  toastTimer = setTimeout(() => {
+    if (reduced()) { el.hidden = true; return; }
+    el.classList.add('out');
+    toastTimer = setTimeout(() => { el.hidden = true; el.classList.remove('out'); }, 200);
+  }, 2500);
 }
 
 // ---------- Helper di visualizzazione ----------
@@ -184,7 +205,7 @@ function musclesHtml(e) {
   return `<div class="muscles">${prim.map(x => `<span class="lv3">${esc(x)}</span>`).join('')}${sec.map(x => `<span class="lv2">${esc(x)}</span>`).join('')}${(e.also || []).map(x => `<span class="lv1">${esc(x)}</span>`).join('')}</div>`;
 }
 const howHtml = e => ['Posizione', 'Movimento', 'Ritorno', 'Attenzione'].map((t, k) => e.how?.[k] ? `<div><b>${t}</b>${esc(e.how[k])}</div>` : '').join('');
-const flipHtml = id => EX[id]?.unknown ? '' : `<div class="flip"><img src="${imgs(id)[0]}" alt="Posizione iniziale"><img class="b" src="${imgs(id)[1]}" alt="Posizione finale"></div>`;
+const flipHtml = id => EX[id]?.unknown ? '' : `<div class="flip" data-id="${esc(id)}"><img src="${imgs(id)[0]}" alt="Posizione iniziale"><img class="b" src="${imgs(id)[1]}" alt="Posizione finale"></div>`;
 const exName = it => EX[it.id]?.name || it.name || it.id;
 const visible = e => !e.hidden;
 const musclesLine = id => Object.entries(EX[id].work).map(([m, w]) => w >= 1 ? MUSCLES[m].name : `${MUSCLES[m].name.toLowerCase()} (in parte)`).join(' · ');
@@ -205,15 +226,23 @@ function calendarCard() {
   return `<section class="card cal">
     <div class="strip" id="strip">${days.map(x => {
       const st = x.frac != null ? lvOf(x.frac) : x.extra ? 'extra' : '';
-      return `<button class="day ${st} ${x.rec ? 'rec' : ''} ${x.today ? 'today' : ''} ${x.key === sel ? 'sel' : ''}" data-act="day" data-k="${x.key}" data-m="${x.month}" data-y="${x.year}" aria-label="${dayLabel(x.key)}">${x.label}<i>${x.num}</i></button>`;
+      return `<button class="day ${st} ${x.rec ? 'rec' : ''} ${x.today ? 'today' : ''} ${x.key === sel ? `sel ${ui.selAnim ? 'sel-in' : ''}` : ''}" data-act="day" data-k="${x.key}" data-m="${x.month}" data-y="${x.year}" aria-label="${dayLabel(x.key)}">${x.label}<i>${x.num}</i></button>`;
     }).join('')}</div>
   </section>`;
 }
-// dopo ogni disegno: il calendario resta dov'era (la prima volta, centrato sul giorno scelto)
+// dopo ogni disegno: il calendario resta dov'era (la prima volta, centrato sul giorno scelto);
+// quando si cambia giorno con lo scorrimento o "Torna a oggi" scivola fino a centrare il giorno nuovo
 function placeStrip() {
+  ui.selAnim = false;
   const st = document.getElementById('strip'); if (!st) return;
-  if (ui.stripX != null) st.scrollLeft = ui.stripX;
-  else { const el = st.querySelector('.sel') || st.querySelector('.today'); if (el) st.scrollLeft = el.offsetLeft - (st.clientWidth - el.offsetWidth) / 2; }
+  const el = st.querySelector('.sel') || st.querySelector('.today');
+  const target = el ? el.offsetLeft - (st.clientWidth - el.offsetWidth) / 2 : 0;
+  if (ui.stripX == null) st.scrollLeft = target;
+  else {
+    st.scrollLeft = ui.stripX;
+    if (ui.stripCenter) { if (reduced()) st.scrollLeft = target; else st.scrollTo({ left: target, behavior: 'smooth' }); }
+  }
+  ui.stripCenter = false;
   st.addEventListener('scroll', () => { ui.stripX = st.scrollLeft; }, { passive: true });
 }
 
@@ -277,6 +306,7 @@ function setDay(k) {
   const t = today();
   if (state.current && state.current.date !== t && state.current.date !== k) leavePast();
   ui.day = k === t ? null : k;
+  ui.selAnim = true;
   save(); render();
 }
 
@@ -293,12 +323,17 @@ function viewOggi() {
   const t = today(), day = ui.day && ui.day !== t ? ui.day : t;
   const c = state.current?.date === day ? state.current : null;
   if (c?.view === 'ex' && c.items.length) return viewSession();
+  let head = '';
+  if (state.notice) head += `<section class="alert small">${esc(state.notice)} <button class="ghost" data-act="notice-ok">OK</button></section>`;
+  head += dayHead(day, t);
+  head += calendarCard();
+  // il contenuto del giorno sta in un blocco a parte: è quello che segue il dito quando si scorre tra i giorni
+  return `${head}<div class="daybody">${dayBody(t, day, c)}</div>`;
+}
+function dayBody(t, day, c) {
   let html = '';
-  if (state.notice) html += `<section class="alert small">${esc(state.notice)} <button class="ghost" data-act="notice-ok">OK</button></section>`;
-  html += dayHead(day, t);
-  html += calendarCard();
-  if (day < t) return html + pastDay(day, c);
-  if (day > t) return html + futureDay(day);
+  if (day < t) return pastDay(day, c);
+  if (day > t) return futureDay(day);
 
   if (E.checkpointDue(state)) {
     html += `<section class="alert"><b>Punto di controllo del ciclo</b><p class="small">Peso di stamattina e circonferenza vita all’altezza dell’ombelico.</p>
@@ -466,13 +501,23 @@ function dayCard(c) {
   const complete = work.length > 0 && doneN === work.length;
   const nSets = s.items.reduce((a, i) => a + (i.id === 'cardio' ? 0 : i.sets.length), 0);
   const html = `<section class="card done-card ${complete ? 'complete' : ''} ${ui.flashDone ? 'pop' : ''}" data-lp="ses" data-id="${s.id}">
+    ${complete && ui.flashDone && !reduced() ? burstHtml() : ''}
     <div class="big-num ${complete ? 't-ok' : ''}">${complete ? 'Fatto!' : 'Fatto in parte'}</div>
     ${complete ? '' : `<p class="muted">${doneN} di ${work.length} esercizi</p><div class="bar ${lvOf(work.length ? doneN / work.length : 0)}"><i style="width:${work.length ? Math.max(4, doneN / work.length * 100) : 0}%"></i></div>`}
-    <div class="summary" style="justify-content:center;margin-bottom:4px"><span><b>${s.minutes}</b> min</span><span><b>${s.kcal[0]}–${s.kcal[1]}</b> kcal</span><span><b>${nSets}</b> serie</span></div>
+    <div class="summary"><span><b>${s.minutes}</b> min</span><span><b>${s.kcal[0]}–${s.kcal[1]}</b> kcal</span><span><b>${nSets}</b> serie</span></div>
     ${s.records?.length ? `<p><b>Record battuti</b></p>${s.records.map(r => `<p>${esc(EX[r.id].name)} · ${kg(Math.round(r.e1rm))} kg stimati</p>`).join('')}` : ''}
   </section>`;
   ui.flashDone = false;
   return html;
+}
+
+// Coriandoli nei tre colori dell'app, una volta sola quando la seduta è finita
+function burstHtml() {
+  const n = 22;
+  return `<div class="burst" aria-hidden="true">${Array.from({ length: n }, (_, k) => {
+    const a = Math.round(k / n * 360 + Math.random() * 14), d = Math.round(70 + Math.random() * 70), r = Math.round(Math.random() * 540 - 270);
+    return `<i style="--a:${a}deg;--d:${d}px;--r:${r}deg;--c:var(--l${k % 3 + 1});--w:${(Math.random() * 0.08).toFixed(2)}s"></i>`;
+  }).join('')}</div>`;
 }
 
 function overview(c) {
@@ -495,18 +540,16 @@ function overview(c) {
       }
       const e = EX[it.id];
       const best = n ? logged(it).reduce((b, x) => (x.kg > b.kg || (x.kg === b.kg && x.reps > b.reps)) ? x : b) : null;
+      // serie previste: − 3 + direttamente nella riga (prima erano su una riga a parte)
+      const pill = `<span class="setpill" data-act="none"><button data-act="ov-sets" data-i="${idx}" data-d="-1" aria-label="Una serie in meno" ${it.planSets <= Math.max(1, n) ? 'disabled' : ''}>−</button><b>${it.planSets}</b><button data-act="ov-sets" data-i="${idx}" data-d="1" aria-label="Una serie in più">+</button></span>`;
       const meta = done ? `${n} serie · ${setTxt(it.id, best)}`
-        : n ? `${n} di ${it.planSets} serie fatte` : it.skipped ? 'saltato' : `${it.planSets} × ${rangeLabel(it.id)} · ${loadLabel(it.id, it.kg)}`;
+        : n ? `${pill}<span>serie · ${n} ${n === 1 ? 'fatta' : 'fatte'}</span>` : it.skipped ? 'saltato' : `${pill}<span>× ${rangeLabel(it.id)} · ${loadLabel(it.id, it.kg)}</span>`;
       inner += `<div class="ex-row ${st} ${pop}" data-lp="ex" data-i="${idx}">
-        <div><div data-act="open" data-g="${gi}"><div class="name">${esc(e.name)}${done ? ' <span class="check">✓</span>' : ''}</div>
+        <div data-act="open" data-g="${gi}"><div class="name">${esc(e.name)}${done ? ' <span class="check">✓</span>' : ''}</div>
           <div class="meta">${meta}</div>
           ${!n && it.note ? `<div class="tip ${/−|ridotto|Fermo|pausa/.test(it.note) ? 'down' : ''}">${esc(it.note)}</div>` : ''}</div>
-          <div class="ctrls">
-            <button data-act="ov-sets" data-i="${idx}" data-d="-1" aria-label="Una serie in meno" ${it.planSets <= Math.max(1, n) ? 'disabled' : ''}>−</button>
-            <button data-act="ov-sets" data-i="${idx}" data-d="1" aria-label="Una serie in più">+</button>
-          </div></div>
-        <div class="updown"><button class="icon" data-act="ov-move" data-i="${idx}" data-d="-1" aria-label="Sposta su" ${idx === 0 ? 'disabled' : ''}>↑</button>
-          <button class="icon" data-act="ov-move" data-i="${idx}" data-d="1" aria-label="Sposta giù" ${idx === c.items.length - 1 ? 'disabled' : ''}>↓</button></div>
+        ${done ? '<div></div>' : `<div class="updown"><button class="icon" data-act="ov-move" data-i="${idx}" data-d="-1" aria-label="Sposta su" ${idx === 0 ? 'disabled' : ''}>↑</button>
+          <button class="icon" data-act="ov-move" data-i="${idx}" data-d="1" aria-label="Sposta giù" ${idx === c.items.length - 1 ? 'disabled' : ''}>↓</button></div>`}
       </div>`;
     });
     rows += g.items.length > 1 ? `<div class="ss-box"><span class="tag">Superserie · recupero dopo la coppia</span>${inner}</div>` : inner;
@@ -528,11 +571,11 @@ function overview(c) {
     ${c.free || !isToday ? '' : `<p class="reason">${esc(c.reason)}</p>`}
     ${logs || !isToday ? '' : `${c.free ? '' : `<div class="row between durrow"><span class="small muted">Tempo oggi</span><span class="seg">${E.DURATIONS.map(v => `<button class="${dur === v ? 'on' : ''}" data-act="today-dur" data-v="${v}">${v}′</button>`).join('')}</span></div>`}
     <div class="summary"><span><b>${c.minutes}</b> min</span><span><b>${work.length}</b> esercizi</span><span><b>${all}</b> serie</span><span><b>${kc[0]}–${kc[1]}</b> kcal</span></div>
-    <p class="small muted">Prima ${E.warmMin(dur)} min di cardio leggero. Tocca il nome di un esercizio per aprirlo.</p>`}
-    ${rows}
+    <p class="small muted">Prima ${E.warmMin(dur)} min di cardio leggero.</p>`}
+    ${nextG >= 0 ? `<button class="primary big go" data-act="open" data-g="${nextG}">${logs ? `Continua · ${esc(nextName)}` : 'Inizia'}</button>` : ''}
+    <div class="rows">${rows}</div>
     <select data-in="ov-add" style="margin-top:12px">${addOptions('+ Aggiungi esercizio')}</select>
   </section>
-  ${nextG >= 0 ? `<button class="primary big" data-act="open" data-g="${nextG}">${logs ? `Continua · ${esc(nextName)}` : 'Inizia'}</button>` : ''}
   ${!isToday ? '' : c.free ? `<div class="row" style="justify-content:center;margin-top:6px"><button class="ghost" data-act="full">Aggiungi la seduta completa di oggi</button></div>`
     : logs ? (nextG >= 0 ? frettaBtn() : '') : `<div class="row" style="justify-content:center;margin-top:6px"><button class="ghost" data-act="recompose">Ricomponi la seduta</button></div>`}`;
 }
@@ -571,12 +614,14 @@ function viewSession() {
   const doneG = groups.filter(gr => gr.items.every(isDone)).length;
   const segs = groups.map((gr, gi) => {
     const done = gr.items.every(isDone), skip = gr.items.every(i => i.skipped), part = gr.items.some(i => logged(i).length);
-    const cls = gi === c.cur ? 'cur' : done ? 'done' : part ? 'part' : skip ? 'skip' : '';
+    // l'esercizio appena finito si colora subito di verde (con il bordo di "sei qui")
+    const cls = `${done ? 'done' : part ? 'part' : skip ? 'skip' : ''} ${gi === c.cur ? 'cur' : ''}`;
     return `<span class="${cls} ${ui.flashSeg === gi ? 'pop' : ''}" data-act="goto" data-g="${gi}"></span>`;
   }).join('');
   ui.flashSeg = null;
   let html = `<div class="topbar"><div class="row between" style="margin-bottom:8px"><button class="ghost back" data-act="list">‹ Elenco</button>
-    <span class="muted small">esercizio ${c.cur + 1} di ${groups.length} · ${doneG} fatti</span></div><div class="progress">${segs}</div></div>`;
+    <span class="muted small">esercizio ${c.cur + 1} di ${groups.length} · ${doneG} fatti</span></div><div class="progress">${segs}</div></div>
+    <div class="exbody">`;
 
   const sm = g.items.length > 1;
   const usedIds = new Set(c.items.map(x => x.id));
@@ -596,7 +641,7 @@ function viewSession() {
     const last = E.suggestion(pastState(), it.id).last;
     const open = infoOpen(it.id);
     html += `<div class="${ui.swapped === idx ? 'pop' : ''}" style="${sm && it !== g.items[0] ? 'margin-top:18px;padding-top:16px;border-top:2px solid var(--line)' : ''}">
-      <div class="row between" style="align-items:flex-start"><h3>${esc(e.name)}${isDone(it) ? ' <span class="check">✓</span>' : ''}</h3><span class="muted small" style="white-space:nowrap;margin-top:4px">${it.planSets} × ${rangeLabel(it.id)}</span></div>
+      <div class="row between" style="align-items:flex-start"><h3>${esc(e.name)}${isDone(it) ? ` <span class="check ${ui.flashCheck === idx ? 'pop' : ''}">✓</span>` : ''}</h3><span class="muted small" style="white-space:nowrap;margin-top:4px">${it.planSets} × ${rangeLabel(it.id)}</span></div>
       ${musclesHtml(e)}
       ${flipHtml(it.id)}
       <button class="info-btn" data-act="info" data-id="${it.id}" aria-expanded="${open}">${INFO_ICON}${open ? 'Nascondi istruzioni' : `Come si fa${st.note ? ' e nota' : ''}`}</button>
@@ -635,8 +680,8 @@ function viewSession() {
         const plates = E.platesPerSide(state, it.id, d.kg);
         html += `<div class="set active ${lv} ${fl || editing ? 'slide' : ''}"><div class="row between"><b>Serie ${i + 1}${editing ? ' · modifica' : ''}</b><span class="lastline">${esc(lastTxt)}</span></div>
           <div class="steppers ${noKg(it.id) ? 'one' : ''}">
-            ${noKg(it.id) ? '' : `<div class="stepper"><button data-act="kg" data-d="-1" aria-label="Meno peso">−</button><b><input class="kgin" type="text" inputmode="decimal" value="${d.kg == null ? '' : st.lb ? E.kgToLb(d.kg) : kg(d.kg)}" placeholder="?" data-in="draft-kg" aria-label="Carico in ${st.lb ? 'libbre' : 'kg'}">${E.canLb(it.id) ? `<small class="unit" data-act="unit" data-id="${it.id}">${st.lb ? `lb${d.kg ? ` · ${kg(d.kg < 9 ? Math.round(d.kg * 10) / 10 : Math.round(d.kg))} kg` : ''}` : 'kg'} ⇄</small>` : '<small>kg</small>'}</b><button data-act="kg" data-d="1" aria-label="Più peso">+</button></div>`}
-            <div class="stepper"><button data-act="reps" data-d="-1" aria-label="Meno">−</button><b>${d.reps}<small>${e.type === 'time' ? 'secondi' : 'ripetizioni'}</small></b><button data-act="reps" data-d="1" aria-label="Più">+</button></div>
+            ${noKg(it.id) ? '' : `<div class="stepper"><button data-act="kg" data-d="-1" aria-label="Meno peso">−</button><b><input class="kgin ${bump('kg')}" type="text" inputmode="decimal" value="${d.kg == null ? '' : st.lb ? E.kgToLb(d.kg) : kg(d.kg)}" placeholder="?" data-in="draft-kg" aria-label="Carico in ${st.lb ? 'libbre' : 'kg'}">${E.canLb(it.id) ? `<small class="unit" data-act="unit" data-id="${it.id}">${st.lb ? `lb${d.kg ? ` · ${kg(d.kg < 9 ? Math.round(d.kg * 10) / 10 : Math.round(d.kg))} kg` : ''}` : 'kg'} ⇄</small>` : '<small>kg</small>'}</b><button data-act="kg" data-d="1" aria-label="Più peso">+</button></div>`}
+            <div class="stepper"><button data-act="reps" data-d="-1" aria-label="Meno">−</button><b><span class="num ${bump('reps')}">${d.reps}</span><small>${e.type === 'time' ? 'secondi' : 'ripetizioni'}</small></b><button data-act="reps" data-d="1" aria-label="Più">+</button></div>
           </div>
           ${plates ? `<p class="small muted" style="margin:-2px 0 8px">Per lato: ${plates.plates.length ? plates.plates.map(kg).join(' + ') : 'nessun disco'}${plates.rest > 0 ? ` (mancano ${kg(plates.rest)} kg per lato con i tuoi dischi)` : ''}</p>` : ''}
           <div class="effort">${EFFS.map(([k, label, hint, elv]) => `<button class="${elv} ${editing && s?.eff === k ? 'on' : ''}" data-act="log" data-eff="${k}">${label}<small>${hint}</small></button>`).join('')}</div>
@@ -651,7 +696,7 @@ function viewSession() {
       ${!isDone(it) ? `<button data-act="skip" data-i="${idx}">${it.skipped ? 'Riprendi' : 'Salta'}</button>` : ''}</div>
     </div>`;
   }
-  ui.flash = null; ui.infoAnim = null; ui.swapped = null;
+  ui.flash = null; ui.infoAnim = null; ui.swapped = null; ui.flashCheck = null;
   html += `</section>`;
   const lastG = c.cur >= groups.length - 1;
   const gDone = g.items.every(i => isDone(i) || i.skipped);
@@ -660,9 +705,11 @@ function viewSession() {
     ${lastG ? `<button class="grow primary" data-act="list">Elenco ✓</button>` : `<button class="grow primary" data-act="goto" data-g="${c.cur + 1}">${gDone ? 'Prossimo esercizio →' : 'Avanti →'}</button>`}
   </div>`;
   if (c.date === today() && !c.free && groups.some(gr => !gr.items.every(i => isDone(i) || i.skipped))) html += frettaBtn();
-  return html;
+  ui.bump = null;
+  return html + '</div>';
 }
 
+const bump = a => ui.bump?.a === a ? (ui.bump.d > 0 ? 'bump-up' : 'bump-down') : '';
 const frettaBtn = () => `<div class="row" style="justify-content:center;margin-top:8px"><button class="ghost" data-act="fretta-open">Ho fretta</button></div>`;
 
 // Cambi dentro la scheda: "Cambia attrezzo" (macchina occupata → cavo → manubri → ...) e
@@ -697,7 +744,7 @@ function logSet(eff) {
     it.adjKg = Math.max(E.stepLoad(state, it.id, 0, 1), lower < d.kg ? lower : E.stepLoad(state, it.id, d.kg, -1));
   } else if (d.s === 0) delete it.adjKg;
   ui.editSet = null; ui.draft = null; ui.flash = { i: d.i, s: d.s };
-  if (!wasDone && isDone(it)) ui.flashEx = d.i;
+  if (!wasDone && isDone(it)) ui.flashEx = ui.flashCheck = d.i;
   if (!wasEdit) {
     const { groups, g } = curGroup(c);
     const counts = g.items.filter(i => !i.skipped).map(i => logged(i).length);
@@ -812,7 +859,7 @@ function viewProgressi() {
 
   // Massimale stimato sulle àncore
   if (ss.length) {
-  html += `<h2>Massimale stimato · esercizi a priorità alta</h2><section class="card">`;
+  html += `<h2>Massimale stimato · priorità alta</h2><section class="card">`;
   let any = false;
   for (const id of MUSCLE_ORDER.flatMap(m => E.anchorsOf(state, m))) {
     if (noKg(id)) continue;
@@ -923,25 +970,59 @@ function viewImpostazioni() {
         <button class="ghost" data-act="snap" data-k="${x.k}">${ui.confirmSnap === x.k ? 'Conferma' : 'Ripristina'}</button></div>`; }).join('')}` : ''}
     <button class="danger" style="margin-top:14px" data-act="reset">${ui.confirmReset ? 'Tocca di nuovo per cancellare tutto' : 'Cancella tutti i dati'}</button>
   </section>
-  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.10 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.11 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
 }
 
 // ---------- Render ----------
 const VIEWS = { oggi: viewOggi, piano: viewPiano, progressi: viewProgressi, cibo: viewCibo, impostazioni: viewImpostazioni };
-// Transizione leggera solo quando cambia schermata (non a ogni tocco)
+// Transizione solo quando cambia schermata (non a ogni tocco):
+// fwd/back = elenco ⇄ esercizio, ex-next/ex-prev = da un esercizio all'altro, day-next/day-prev = cambio giorno, fade = cambio scheda
 let lastKey = null;
 function screenKey() { const c = state.current; return ui.tab === 'oggi' && c?.view === 'ex' && c.date === (ui.day || today()) ? `ex:${c.cur}` : ui.tab + (ui.tab === 'oggi' ? ':' + (ui.day || '') : ''); }
+function transitionKind(prev, key) {
+  if (!prev) return 'fade';
+  if (prev === key) return '';
+  const a = prev.startsWith('ex:') ? +prev.slice(3) : null, b = key.startsWith('ex:') ? +key.slice(3) : null;
+  if (a == null && b != null) return 'fwd';
+  if (a != null && b == null) return key.startsWith('oggi') ? 'back' : 'fade';
+  if (a != null && b != null) return b > a ? 'ex-next' : 'ex-prev';
+  if (prev.startsWith('oggi:') && key.startsWith('oggi:')) return (key.slice(5) || today()) > (prev.slice(5) || today()) ? 'day-next' : 'day-prev';
+  return 'fade';
+}
+// La schermata vecchia resta un attimo come copia sopra la nuova: scivola via dal lato giusto e sfuma
+function ghostOut(old, kind) {
+  const box = document.getElementById('ghosts'); if (!box || !old.animate) return;
+  const r = old.getBoundingClientRect();
+  const g = old.cloneNode(true);
+  g.className = `screen ${kind.startsWith('day') ? 'g-day' : kind.startsWith('ex-') ? 'g-ex' : ''}`;
+  g.querySelectorAll('[id]').forEach(x => x.removeAttribute('id'));
+  Object.assign(g.style, { top: `${r.top}px`, left: `${r.left}px`, width: `${r.width}px` });
+  box.appendChild(g);
+  const st = old.querySelector('.strip'), gst = g.querySelector('.strip'); if (st && gst) gst.scrollLeft = st.scrollLeft;
+  const part = kind.startsWith('day') ? g.querySelector('.daybody') : kind.startsWith('ex-') ? g.querySelector('.exbody') : g;
+  const dir = /next|fwd/.test(kind) ? -1 : 1;
+  const from = part?.style.transform || 'none', op = part?.style.opacity || '1';
+  // la copia sparisce presto (non si sovrappone alla nuova), ma continua a scivolare per dare la direzione
+  const anim = part?.animate([{ transform: from, opacity: op }, { opacity: 0, offset: 0.4 }, { transform: `translateX(${dir * 38}%)`, opacity: 0 }], { duration: 280, easing: 'cubic-bezier(.4, 0, .2, 1)', fill: 'forwards' });
+  const end = () => g.remove();
+  if (anim) { anim.onfinish = end; anim.oncancel = end; } else end();
+  setTimeout(end, 600);
+}
 function render() {
-  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === ui.tab));
+  const tabs = [...document.querySelectorAll('.tabs button')];
+  tabs.forEach(b => b.classList.toggle('on', b.dataset.tab === ui.tab));
+  const ti = tabs.findIndex(b => b.dataset.tab === ui.tab), bar = $('#tabs');
+  bar.style.setProperty('--ti', Math.max(0, ti)); bar.classList.toggle('noind', ti < 0);
   const key = screenKey();
-  let cls = '';
-  if (lastKey && key !== lastKey) {
-    const a = lastKey.startsWith('ex:') ? +lastKey.slice(3) : null, b = key.startsWith('ex:') ? +key.slice(3) : null;
-    cls = a == null && b != null ? 'enter-fwd' : a != null && b == null ? (key === 'oggi' ? 'enter-back' : 'enter-fade') : a != null && b != null ? (b > a ? 'enter-fwd' : 'enter-back') : 'enter-fade';
-  }
+  const kind = reduced() ? '' : transitionKind(lastKey, key);
   lastKey = key;
-  if (ui.dayAnim) { cls = ui.dayAnim === 'from-r' ? 'enter-fwd' : 'enter-back'; ui.dayAnim = null; }
-  $('#view').innerHTML = `<div class="screen ${cls}">${VIEWS[ui.tab]()}</div>`;
+  const view = $('#view'), old = view.firstElementChild;
+  if (old && kind && kind !== 'fade') ghostOut(old, kind);
+  // le immagini dell'esercizio restano le stesse: l'animazione non riparte a ogni tocco
+  const flips = new Map([...view.querySelectorAll('.flip[data-id]')].map(f => [f.dataset.id, f]));
+  view.innerHTML = `<div class="screen ${kind ? `enter-${kind}` : ''}">${VIEWS[ui.tab]()}</div>`;
+  if (flips.size && !kind) view.querySelectorAll('.flip[data-id]').forEach(f => { const o = flips.get(f.dataset.id); if (o) f.replaceWith(o); });
+  if (ui.toTop) { view.scrollTop = 0; ui.toTop = false; }
   placeStrip();
   renderSheet();
   if (state.current?.view !== 'ex' && !state.rest) keepAwake(false);
@@ -951,6 +1032,10 @@ function render() {
 // ---------- Scheda esercizio a comparsa (tenendo premuto in Piano) ----------
 function renderSheet() {
   const el = $('#sheet');
+  if (el.classList.contains('closing')) {
+    if (!ui.sheet) return;              // sta scendendo: la si lascia finire
+    el.classList.remove('closing'); el.dataset.id = '';
+  }
   if (ui.sheet === 'menu' && ui.menu) {
     el.dataset.id = 'menu';
     el.innerHTML = `<div class="sheet-bg" data-act="sheet-close"></div>
@@ -983,7 +1068,45 @@ function renderSheet() {
     </div>`;
   el.hidden = false;
 }
-function closeSheet() { ui.sheet = null; $('#sheet').dataset.id = ''; renderSheet(); }
+// Chiusura: la scheda scende (da dove l'ha lasciata il dito) e lo sfondo sfuma
+function closeSheet() {
+  ui.sheet = null;
+  const el = $('#sheet');
+  if (el.hidden || el.classList.contains('closing')) return;
+  el.dataset.id = '';
+  const card = el.querySelector('.sheet-card'), bg = el.querySelector('.sheet-bg');
+  if (reduced() || !card?.animate) { el.hidden = true; el.innerHTML = ''; return; }
+  el.classList.add('closing');
+  const from = card.style.transform || 'translateY(0)';
+  const a = card.animate([{ transform: from }, { transform: 'translateY(105%)' }], { duration: 260, easing: 'cubic-bezier(.4, 0, 1, 1)', fill: 'forwards' });
+  bg?.animate([{ opacity: getComputedStyle(bg).opacity }, { opacity: 0 }], { duration: 260, fill: 'forwards' });
+  const done = () => { if (!el.classList.contains('closing')) return; el.classList.remove('closing'); if (!ui.sheet) { el.hidden = true; el.innerHTML = ''; } };
+  a.onfinish = done; setTimeout(done, 500);
+}
+// La scheda si chiude anche trascinandola verso il basso
+let sd = null;
+document.addEventListener('touchstart', ev => {
+  sd = null;
+  const card = ev.target.closest?.('.sheet-card'); if (!card || ev.touches.length !== 1 || card.scrollTop > 0) return;
+  sd = { card, y: ev.touches[0].clientY, t: Date.now(), dy: 0, on: false };
+}, { passive: true });
+document.addEventListener('touchmove', ev => {
+  if (!sd) return;
+  const dy = ev.touches[0].clientY - sd.y;
+  if (!sd.on) { if (dy < -4) { sd = null; return; } if (dy < 8) return; sd.on = true; }
+  if (ev.cancelable) ev.preventDefault();
+  sd.dy = Math.max(0, dy - 8);
+  sd.card.style.transform = `translateY(${sd.dy}px)`;
+  const bg = sd.card.previousElementSibling; if (bg) bg.style.opacity = String(Math.max(0.2, 1 - sd.dy / 500));
+}, { passive: false });
+for (const t of ['touchend', 'touchcancel']) document.addEventListener(t, () => {
+  const s = sd; sd = null; if (!s?.on) return;
+  const v = s.dy / Math.max(1, Date.now() - s.t);
+  if (s.dy > 110 || (s.dy > 30 && v > 0.5)) return closeSheet();
+  const from = s.card.style.transform; s.card.style.transform = '';
+  const bg = s.card.previousElementSibling; if (bg) bg.style.opacity = '';
+  s.card.animate?.([{ transform: from }, { transform: 'none' }], { duration: 320, easing: 'cubic-bezier(.34, 1.3, .64, 1)' });
+}, { passive: true });
 
 function download(name, text, type) {
   const blob = new Blob([text], { type });
@@ -999,6 +1122,7 @@ function download(name, text, type) {
 function stepDraft(a, d) {
   const c = state.current; if (!c || !ui.draft) return;
   const it = c.items[ui.draft.i];
+  ui.bump = { a, d };
   if (a === 'kg') ui.draft.kg = isLb(it.id) ? E.stepLoad(state, it.id, ui.draft.kg, d) : Math.max(0, Math.round(((ui.draft.kg ?? 0) + d) * 100) / 100);
   else ui.draft.reps = Math.max(1, ui.draft.reps + d * (EX[it.id].type === 'time' ? 5 : 1));
   render();
@@ -1018,7 +1142,7 @@ document.addEventListener('click', ev => {
   unlockAudio();
   const tab = ev.target.closest('[data-tab]');
   if (tab) {
-    if (tab.dataset.tab === 'oggi' && ui.tab === 'oggi' && ui.day) { ui.stripX = null; return setDay(today()); }   // secondo tocco su Oggi: torna a oggi
+    if (tab.dataset.tab === 'oggi' && ui.tab === 'oggi' && ui.day) { ui.stripCenter = true; return setDay(today()); }   // secondo tocco su Oggi: torna a oggi
     ui.tab = tab.dataset.tab; ui.confirmReset = false; ui.confirmDel = null; ui.confirmSnap = null; toTop(); render(); return;
   }
   if (Date.now() - (ui.lpEnd || 0) < 450) { ui.lpEnd = 0; return; }   // il tocco che chiude una pressione lunga non conta
@@ -1029,6 +1153,7 @@ document.addEventListener('click', ev => {
   const rerender = () => { if (c) { tidySupersets(c); c.minutes = E.planMinutes(state, c); sync(); } save(); render(); };
   const replan = () => { if (c && !hasLogs(c)) state.current = null; };
   switch (a) {
+    case 'none': return;                          // tocco sul contatore delle serie: non apre l'esercizio
     case 'intro-ok': state.seenIntro = true; return rerender();
     case 'cycle-ok': state.cycleBanner = null; return rerender();
     case 'notice-ok': state.notice = null; return rerender();
@@ -1059,7 +1184,7 @@ document.addEventListener('click', ev => {
       sync(); save(); return render();
     }
     case 'open': return go(+el.dataset.g);
-    case 'day': { const k = el.dataset.k; if (!el.closest('#strip')) ui.stripX = null; return setDay(k); }
+    case 'day': { const k = el.dataset.k; if (!el.closest('#strip')) ui.stripCenter = true; return setDay(k); }
     case 'past-open': openPast(el.dataset.k); save(); return render();
     case 'past-close': leavePast(); save(); toTop(); return render();
     case 'backup-later': state.meta.remindAt = today(); return rerender();
@@ -1254,20 +1379,24 @@ function lpMenu(el) {
   ui.menu = { title, items }; ui.sheet = 'menu'; ui.longAt = Date.now(); renderSheet();
   return true;
 }
+// Mentre tieni premuto il blocco si stringe un poco: si capisce che sta per aprirsi il menu
 let lp = null;
+const lpCancel = () => { if (!lp) return; clearTimeout(lp.timer); clearTimeout(lp.hold); lp.el.classList.remove('lp-hold'); lp = null; };
 document.addEventListener('touchstart', ev => {
-  if (lp) { clearTimeout(lp.timer); lp = null; }
+  lpCancel();
   const el = ev.target.closest?.('[data-lp]');
   if (!el || ev.touches.length !== 1 || ev.target.closest('button,input,select,textarea,.flip')) return;
   const t = ev.touches[0];
-  lp = { x: t.clientX, y: t.clientY, timer: setTimeout(() => { lp = null; ui.lpOpen = lpMenu(el); }, 500) };
+  lp = { el, x: t.clientX, y: t.clientY,
+    hold: setTimeout(() => el.classList.add('lp-hold'), 130),
+    timer: setTimeout(() => { el.classList.remove('lp-hold'); lp = null; ui.lpOpen = lpMenu(el); }, 500) };
 }, { passive: true });
 document.addEventListener('touchmove', ev => {
   if (!lp) return; const t = ev.touches[0];
-  if (Math.hypot(t.clientX - lp.x, t.clientY - lp.y) > 10) { clearTimeout(lp.timer); lp = null; }
+  if (Math.hypot(t.clientX - lp.x, t.clientY - lp.y) > 10) lpCancel();
 }, { passive: true });
 for (const t of ['touchend', 'touchcancel']) document.addEventListener(t, () => {
-  if (lp) { clearTimeout(lp.timer); lp = null; }
+  lpCancel();
   if (ui.lpOpen) { ui.lpOpen = false; ui.lpEnd = Date.now(); }
 }, { passive: true });
 document.addEventListener('contextmenu', ev => {   // computer: tasto destro
@@ -1275,26 +1404,49 @@ document.addEventListener('contextmenu', ev => {   // computer: tasto destro
   if (lpMenu(el)) ev.preventDefault();
 });
 
-// Scorrimento orizzontale tra un esercizio e l'altro
-let touch = null;
-// In Oggi (fuori dalla seduta) lo stesso gesto cambia giorno: verso sinistra il giorno dopo, verso destra quello prima
-document.addEventListener('touchstart', ev => {
+// Scorrimento orizzontale: in Oggi cambia giorno (verso sinistra il giorno dopo), nella seduta cambia esercizio.
+// Il contenuto segue il dito; lasciando oltre metà strada (o con un colpo veloce) si passa, altrimenti torna al suo posto.
+let sw = null;
+function swipeCan(ex, dir) {
+  if (!ex) return Math.abs(E.diffDays(E.addDays(ui.day || today(), dir), today())) <= 15;   // come il calendario
   const c = state.current;
-  const inEx = c?.view === 'ex' && c.date === (ui.day || today());
-  touch = ui.tab === 'oggi' && !ui.sheet && !ev.target.closest?.('input,select,.flip,#strip') && ev.touches.length === 1
-    ? { x: ev.touches[0].clientX, y: ev.touches[0].clientY, t: Date.now(), ex: inEx } : null;
+  return dir > 0 ? c.cur < E.groupItems(c.items).length - 1 : true;                     // dal primo esercizio si torna all'elenco
+}
+document.addEventListener('touchstart', ev => {
+  sw = null;
+  if (ui.tab !== 'oggi' || ui.sheet || ev.touches.length !== 1 || ev.target.closest?.('input,select,.flip,#strip')) return;
+  const c = state.current;
+  const ex = c?.view === 'ex' && c.date === (ui.day || today());
+  const body = document.querySelector(ex ? '#view .exbody' : '#view .daybody'); if (!body) return;
+  sw = { x: ev.touches[0].clientX, y: ev.touches[0].clientY, t: Date.now(), ex, body, lock: null, dx: 0 };
 }, { passive: true });
-document.addEventListener('touchend', ev => {
-  if (!touch) return; const t = ev.changedTouches[0];
-  const dx = t.clientX - touch.x, dy = t.clientY - touch.y, fast = Date.now() - touch.t < 600, ex = touch.ex; touch = null;
-  if (!fast || Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 2) return;
-  if (!ex) {
-    const k = E.addDays(ui.day || today(), dx < 0 ? 1 : -1);
-    if (Math.abs(E.diffDays(k, today())) > 15) return;   // come il calendario: 15 giorni avanti e indietro
-    ui.stripX = null; ui.dayAnim = dx < 0 ? 'from-r' : 'from-l'; return setDay(k);
+document.addEventListener('touchmove', ev => {
+  if (!sw) return;
+  const p = ev.touches[0], dx = p.clientX - sw.x, dy = p.clientY - sw.y;
+  if (!sw.lock) {
+    if (Math.hypot(dx, dy) < 10) return;
+    sw.lock = Math.abs(dx) > Math.abs(dy) * 1.2 ? 'h' : 'v';
+    if (sw.lock === 'h') { if (hold) clearTimeout(hold.t); sw.can = { 1: swipeCan(sw.ex, 1), '-1': swipeCan(sw.ex, -1) }; }
   }
-  const c = state.current; const n = E.groupItems(c.items).length;
-  if (dx < 0 && c.cur < n - 1) go(c.cur + 1); else if (dx > 0 && c.cur > 0) go(c.cur - 1); else if (dx > 0 && c.cur === 0) showList();
+  if (sw.lock !== 'h') return;
+  if (ev.cancelable) ev.preventDefault();
+  const ok = sw.can[dx < 0 ? 1 : -1];
+  sw.dx = dx;
+  sw.body.style.transform = `translateX(${ok ? dx : dx * 0.2}px)`;     // dove non si può andare fa resistenza
+  sw.body.style.opacity = ok ? String(1 - Math.min(0.45, Math.abs(dx) / 700)) : '';
+}, { passive: false });
+for (const type of ['touchend', 'touchcancel']) document.addEventListener(type, () => {
+  const s = sw; sw = null; if (!s || s.lock !== 'h') return;
+  const dir = s.dx < 0 ? 1 : -1, v = Math.abs(s.dx) / Math.max(1, Date.now() - s.t);
+  if (type === 'touchend' && s.can[dir] && (Math.abs(s.dx) > Math.min(120, innerWidth * 0.3) || (Math.abs(s.dx) > 40 && v > 0.45))) {
+    if (!s.ex) { ui.stripCenter = true; return setDay(E.addDays(ui.day || today(), dir)); }
+    const c = state.current;
+    if (dir > 0) return go(c.cur + 1);
+    return c.cur > 0 ? go(c.cur - 1) : showList();
+  }
+  const from = s.body.style.transform, op = s.body.style.opacity || '1';
+  s.body.style.transform = ''; s.body.style.opacity = '';
+  if (!reduced()) s.body.animate?.([{ transform: from, opacity: op }, { transform: 'none', opacity: 1 }], { duration: 380, easing: 'cubic-bezier(.34, 1.25, .64, 1)' });
 }, { passive: true });
 
 // ---------- Avvio ----------
