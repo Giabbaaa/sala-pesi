@@ -1,10 +1,14 @@
 name: Menu mensa
+# Ogni lunedì legge il menu della mensa (Nutreetion Lab), stima calorie e proteine dei piatti
+# e aggiorna mensa.json, che l'app scarica. Si può avviare anche a mano da Actions.
 on:
   schedule:
-    - cron: '0 5 * * 1'   # ogni lunedì alle 6 (ora italiana d'inverno)
+    - cron: '0 5 * * 1'   # lunedì alle 6 (ora italiana d'inverno)
+    - cron: '0 9 * * 3'   # mercoledì: un controllo in più se il menu esce in ritardo
   workflow_dispatch:
 permissions:
   contents: write
+concurrency: mensa
 jobs:
   menu:
     runs-on: ubuntu-latest
@@ -12,5 +16,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-      - run: node tools/mensa-debug.mjs
+          node-version: 22
+      - run: node tools/mensa.mjs
+      - name: Salva il menu
+        run: |
+          git config user.name "menu-mensa"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add mensa.json
+          if git diff --cached --quiet; then echo "niente di nuovo"; exit 0; fi
+          git commit -m "Menu della mensa aggiornato"
+          git pull --rebase origin main
+          git push origin HEAD:main
