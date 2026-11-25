@@ -290,7 +290,7 @@ const isDone = it => it.id === 'cardio' ? logged(it).length > 0 : logged(it).len
 const todaySession = () => state.sessions.find(s => s.date === today());
 // Lo storico senza la giornata in corso: per "ultima volta" e per i carichi consigliati
 const pastState = () => { const d = state.current?.date || today(); return { ...state, sessions: state.sessions.filter(s => s.date !== d) }; };
-const newItem = id => { if (state.current?.home) return E.homeItem(pastState(), id, 3, today()); const sg = E.suggestion(pastState(), id); return { id, planSets: 3, kg: sg.kg, reps: sg.reps, note: sg.note, ss: null, sets: [], skipped: false }; };
+const newItem = (id, home = !!state.current?.home) => { if (home) return E.homeItem(pastState(), id, 3, today()); const sg = E.suggestion(pastState(), id); return { id, planSets: 3, kg: sg.kg, reps: sg.reps, note: sg.note, ss: null, sets: [], skipped: false }; };
 
 // A casa: come montare il manubrio per quel peso
 function homeLine(c, id, kgv) {
@@ -303,7 +303,7 @@ function homeLine(c, id, kgv) {
 const fromSession = (s, date) => ({ date, reason: s.home ? 'Allenamento a casa' : 'Allenamento di oggi', deload: s.deload, seed: s.seed, free: !!s.free, home: s.home || null, forced: true, cur: 0, view: 'list', duration: s.duration, want: s.want,
   items: s.items.map(i => {
     if (i.id === 'cardio') return { id: 'cardio', minutes: i.minutes, planSets: 0, ss: null, skipped: !!i.skipped, sets: [...i.sets] };
-    const x = newItem(i.id); const l = i.sets[i.sets.length - 1];
+    const x = newItem(i.id, !!s.home); const l = i.sets[i.sets.length - 1];
     return { ...x, ss: i.ss, planSets: i.planSets, skipped: i.skipped, minutes: i.minutes, sets: [...i.sets], kg: l ? l.kg : x.kg };
   }) });
 
@@ -397,9 +397,9 @@ function pastDay(k, c) {
 const EFF_LV = { facile: 'lv1', giusto: 'lv2', limite: 'lv3' };
 function sessionSummary(s) {
   const nSets = s.items.reduce((a, i) => a + (i.id === 'cardio' ? 0 : i.sets.length), 0);
-  const title = s.free || s.mini ? 'Esercizi extra' : (s.frac ?? 1) < 1 ? 'Fatto in parte' : 'Fatto!';
+  const title = s.home === 'mini' ? 'Mini a casa' : s.free || s.mini ? 'Esercizi extra' : (s.frac ?? 1) < 1 ? 'Fatto in parte' : 'Fatto!';
   return `<section class="card" data-lp="ses" data-id="${s.id}">
-    <h3 class="${title === 'Fatto!' ? 't-ok' : ''}">${title}${s.deload ? ' · scarico' : ''}</h3>
+    <h3 class="${title === 'Fatto!' ? 't-ok' : ''}">${title}${s.home === 'full' ? ' · a casa' : ''}${s.deload ? ' · scarico' : ''}</h3>
     <div class="summary" style="margin-top:8px"><span><b>${s.minutes || '?'}</b> min</span><span><b>${s.kcal ? `${s.kcal[0]}–${s.kcal[1]}` : '–'}</b> kcal</span><span><b>${nSets}</b> serie</span></div>
     ${s.items.filter(it => it.sets.length).map(it => it.id === 'cardio'
       ? `<div class="hist-row"><b><span class="cardio-ico">🚴</span>Cardio</b><span class="small muted">${it.minutes} min</span></div>`
@@ -744,7 +744,7 @@ const frettaBtn = () => `<div class="row" style="justify-content:center;margin-t
 // "Cambia esercizio" (un altro con lo stesso attrezzo; in superserie, alla stessa postazione del compagno)
 function swapButtons(c, g, it, idx, used) {
   if (logged(it).length) return '';
-  if (c.home) return E.nextHome(it.id, used) ? `<button data-act="swap-ex" data-i="${idx}">Cambia esercizio</button>` : '';
+  if (c.home) return E.nextHome(state, it.id, used) ? `<button data-act="swap-ex" data-i="${idx}">Cambia esercizio</button>` : '';
   const partner = g.items.length > 1 ? g.items.find(x => x !== it) : null;
   const sameNext = E.nextSameSetup(state, it.id, used, partner?.id);
   const setupNext = partner ? null : E.nextSetup(state, it.id, used);
@@ -752,8 +752,25 @@ function swapButtons(c, g, it, idx, used) {
 }
 function replaceEx(it, nid) {
   const sg = state.current?.home ? E.homeItem(pastState(), nid, it.planSets, today()) : E.suggestion(pastState(), nid);
-  Object.assign(it, { id: nid, kg: sg.kg, reps: sg.reps, note: sg.note, sets: [] }); delete it.adjKg; delete it.orig;
+  if (!it.added && !it.orig) it.orig = it.id;   // l'esercizio proposto dall'app: conta per le priorità quando fai il nuovo
+  Object.assign(it, { id: nid, kg: sg.kg, reps: sg.reps, note: sg.note, sets: [] }); delete it.adjKg;
   ui.draft = null; ui.editSet = null; ui.swapped = state.current.items.indexOf(it);
+}
+
+// Le scelte fatte durante la seduta di oggi cambiano le priorità (regole in engine: learnChoice).
+// Contano quando fai davvero l'esercizio scelto: alla prima serie segnata.
+const liveToday = c => !!c && c.date === today() && !c.free;
+const PRIO_WORD = { 3: 'alta', 2: 'media', 1: 'bassa', 0: 'mai' };
+function learnToast(changes, home) {
+  if (!changes.length) return;
+  toast(`Piano${home ? ' a casa' : ''} aggiornato · ${changes.map(x => `${EX[x.id].name}: ${PRIO_WORD[x.to]}`).join(' · ')}`);
+}
+function learnFrom(c, it) {
+  if (it.learned || !liveToday(c) || logged(it).length !== 1) return;
+  it.learned = true;
+  const rejected = it.orig && it.orig !== it.id ? it.orig : null;
+  if (!rejected && !it.added) return;
+  learnToast(E.learnChoice(state, { chosen: it.id, rejected, home: !!c.home, today: today() }), c.home);
 }
 
 function logSet(eff) {
@@ -765,6 +782,7 @@ function logSet(eff) {
   if (wasEdit) set.t = it.sets[d.s].t || set.t;
   const wasDone = isDone(it);
   it.sets[d.s] = set; it.skipped = false;
+  learnFrom(c, it);
   // Al limite già alla prima serie sotto il minimo: le serie seguenti si alleggeriscono
   const r = TYPE_RULES[e.type];
   if (d.s === 0 && eff === 'limite' && d.reps < r.min && !noKg(it.id)) {
@@ -834,6 +852,9 @@ function goalsHtml() {
 
 function viewPiano() {
   const ci = E.cycleInfo(state); const s = state.settings;
+  // priorità degli esercizi: quelle della palestra o quelle di casa (stessi colori, stesso tocco)
+  const home = !!ui.planHome;
+  const prioOf = id => home ? ((s.homePlan?.[EX[id].muscle] || {})[id] || 0) : E.exPrio(state, id);
   const done7 = E.setsByMuscle(state, E.addDays(today(), -6), today());
   let html = `<h1>Piano</h1>
   <section class="card"><div class="row between"><h3>Ciclo ${ci.n}</h3><span class="muted">${ci.deloadLeft ? `scarico: ${ci.deloadLeft} sedute` : `seduta ${ci.session} di ${ci.length}`}</span></div>
@@ -861,14 +882,16 @@ function viewPiano() {
   </section>
 
   <h2>Priorità ed esercizi</h2><section class="card">
+  <div class="seg place"><button class="${home ? '' : 'on'}" data-act="plan-place" data-v="gym">In palestra</button><button class="${home ? 'on' : ''}" data-act="plan-place" data-v="home">A casa</button></div>
   <p class="small muted">Accanto al muscolo: quante serie fargli fare. Sotto, tocca un esercizio per cambiarne la priorità, tienilo premuto per vedere com’è.</p>
+  <p class="small muted" style="margin-top:6px">Si aggiornano anche da sole: dalla seconda volta, l’esercizio che scegli al posto di un altro sale e quello che lasci scende.</p>
   <div class="legend"><span><i class="dot lv3"></i>alta: sempre, misura i progressi</span><span><i class="dot lv2"></i>media: a rotazione</span><span><i class="dot lv1"></i>bassa: ogni tanto</span><span>senza colore: mai</span></div>
   ${MUSCLE_ORDER.map(m => {
-    const groups = EQUIP_GROUPS.map(g => ({ ...g, list: EXERCISES.filter(e => e.muscle === m && visible(e) && g.eq.includes(e.equip)) })).filter(g => g.list.length);
+    const groups = EQUIP_GROUPS.map(g => ({ ...g, list: EXERCISES.filter(e => e.muscle === m && visible(e) && (!home || e.home) && g.eq.includes(e.equip)) })).filter(g => g.list.length);
     return `<div class="pm"><div class="head"><b>${MUSCLES[m].name}</b>
       <span class="seg lv">${['alta', 'normale', 'minima'].map(v => `<button class="${s.priority[m] === v ? 'on ' + PRIO_LV[v] : ''}" data-act="prio" data-m="${m}" data-v="${v}">${PRIO_LABEL[v]}</button>`).join('')}</span></div>
-      ${groups.map(g => `<div class="eqlabel">${g.label}</div><div class="pchips">${g.list.map(e => { const lv = E.exPrio(state, e.id);
-        return `<button class="${XP_LV[lv] || ''}" data-act="xp" data-id="${e.id}" aria-label="${esc(e.name)}: priorità ${['nessuna', 'bassa', 'media', 'alta'][lv]}">${esc(e.name)}</button>`; }).join('')}</div>`).join('')}
+      ${groups.map(g => `<div class="eqlabel">${g.label}</div><div class="pchips">${g.list.map(e => { const lv = prioOf(e.id);
+        return `<button class="${XP_LV[lv] || ''}" data-act="xp" data-id="${e.id}"${home ? ' data-home="1"' : ''} aria-label="${esc(e.name)}: priorità ${['nessuna', 'bassa', 'media', 'alta'][lv]}">${esc(e.name)}</button>`; }).join('')}</div>`).join('')}
     </div>`; }).join('')}
   </section>`;
   return html;
@@ -938,7 +961,7 @@ function viewProgressi() {
   // Elenco allenamenti (pressione lunga per eliminarne uno)
   if (ss.length) html += `<h2>Allenamenti</h2><section class="card">${[...ss].reverse().map(s => {
     const n = s.items.reduce((a, i) => a + (i.id === 'cardio' ? 0 : (i.sets || []).length), 0);
-    return `<div class="mrow" style="align-items:center" data-lp="ses" data-id="${s.id}"><span><b>${dayLabel(s.date)}</b>${s.deload ? ' <span class="small muted">scarico</span>' : ''}${s.free ? ' <span class="small muted">extra</span>' : s.frac < 1 ? ' <span class="small muted">parziale</span>' : ''}<br><span class="small muted">${s.minutes || '?'} min · ${n} serie${s.kcal ? ` · ${s.kcal[0]}–${s.kcal[1]} kcal` : ''}</span></span></div>`;
+    return `<div class="mrow" style="align-items:center" data-lp="ses" data-id="${s.id}"><span><b>${dayLabel(s.date)}</b>${s.deload ? ' <span class="small muted">scarico</span>' : ''}${s.home ? ` <span class="small muted">${s.home === 'mini' ? 'mini a casa' : 'a casa'}</span>` : ''}${s.free ? ' <span class="small muted">extra</span>' : !s.home && s.frac < 1 ? ' <span class="small muted">parziale</span>' : ''}<br><span class="small muted">${s.minutes || '?'} min · ${n} serie${s.kcal ? ` · ${s.kcal[0]}–${s.kcal[1]} kcal` : ''}</span></span></div>`;
   }).join('')}</section>`;
   return html;
 }
@@ -1040,6 +1063,7 @@ function viewImpostazioni() {
   </section>
   <h2>Dischi disponibili</h2><section class="card"><div class="chips">${[25, 20, 15, 10, 5, 2.5, 1.25].map(p => `<button class="${s.plates.includes(p) ? 'on' : ''}" data-act="plate" data-v="${p}">${kg(p)} kg</button>`).join('')}</div>
     <p class="small muted" style="margin-top:8px">Per gli attrezzi a dischi l’app ti dice cosa mettere per lato.</p></section>
+  <h2>Manubri di casa</h2><section class="card stack">${homeDbHtml()}</section>
   <h2>Dati e backup</h2><section class="card stack">
     ${ghHtml()}
     <p class="small muted">I dati restano su questo telefono anche quando l’app si aggiorna. Se cancelli l’app o cambi iPhone servono una copia su file (per esempio su iCloud Drive). Ultima copia su file: <b>${state.meta.exported ? dayLabel(state.meta.exported) : 'mai'}</b>.</p>
@@ -1049,7 +1073,17 @@ function viewImpostazioni() {
         <button class="ghost" data-act="snap" data-k="${x.k}">${ui.confirmSnap === x.k ? 'Conferma' : 'Ripristina'}</button></div>`; }).join('')}` : ''}
     <button class="danger" style="margin-top:14px" data-act="reset">${ui.confirmReset ? 'Tocca di nuovo per cancellare tutto' : 'Cancella tutti i dati'}</button>
   </section>
-  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.18 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.19 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+}
+
+// I manubri di casa: peso del manico e dischi (servono per i pesi delle sedute a casa)
+const HOME_PLATES = [5, 2.5, 2, 1.5, 1.25, 1, 0.5];
+function homeDbHtml() {
+  const db = state.settings.homeDb, top = single => { const L = E.homeLoads(state, single); return L[L.length - 1].kg; }, pair = top(false), one = top(true);
+  return `<div><span>Manico</span><div class="seg" style="margin-top:8px">${[0.5, 1, 1.5, 2, 2.5].map(v => `<button class="${db.handle === v ? 'on' : ''}" data-act="hdb-handle" data-v="${v}">${kg(v)} kg</button>`).join('')}</div></div>
+    <div><span>Dischi: tocca per cambiare quanti ne hai</span><div class="chips" style="margin-top:8px">${HOME_PLATES.map(p => { const n = db.plates[p] || 0;
+      return `<button class="${n ? 'on' : ''}" data-act="hdb-plate" data-v="${p}">${kg(p)} kg${n ? ` × ${n}` : ''}</button>`; }).join('')}</div></div>
+    <p class="small muted">Con due manubri arrivi a ${kg(pair)} kg ciascuno, con uno solo a ${kg(one)} kg.</p>`;
 }
 
 // ---------- Render ----------
@@ -1267,7 +1301,13 @@ document.addEventListener('click', ev => {
   const a = el.dataset.act; const c = state.current;
   const i = +el.dataset.i; const d = +el.dataset.d;
   const rerender = () => { if (c) { tidySupersets(c); c.minutes = E.planMinutes(state, c); sync(); } save(); render(); };
-  const replan = () => { if (c && !hasLogs(c)) state.current = null; };
+  // il piano è cambiato: la seduta di oggi non ancora iniziata si ricompone (quella a casa resta a casa, quella voluta resta)
+  const replan = () => {
+    if (!c || hasLogs(c)) return;
+    if (c.date !== today() || c.free || (!c.home && !c.forced)) { state.current = null; return; }
+    state.current = c.home ? E.composeHome(state, c.date, Date.now(), c.home) : Object.assign(E.compose(state, c.date, Date.now(), c.duration), { forced: true });
+    state.current.minutes = E.planMinutes(state, state.current);
+  };
   switch (a) {
     case 'none': return;                          // tocco sul contatore delle serie: non apre l'esercizio
     case 'intro-ok': state.seenIntro = true; return rerender();
@@ -1348,7 +1388,9 @@ document.addEventListener('click', ev => {
     }
     case 'list': return showList();
     case 'ov-sets': c.items[i].planSets = Math.max(1, logged(c.items[i]).length, Math.min(8, c.items[i].planSets + d)); return rerender();
-    case 'ov-del': if (logged(c.items[i]).length) return; c.items.splice(i, 1); c.cur = Math.min(c.cur, Math.max(0, E.groupItems(c.items).length - 1)); return rerender();
+    case 'ov-del': if (logged(c.items[i]).length) return;
+      if (liveToday(c) && !c.items[i].added && c.items[i].id !== 'cardio') learnToast(E.learnChoice(state, { rejected: c.items[i].orig || c.items[i].id, home: !!c.home, today: today() }), c.home);
+      c.items.splice(i, 1); c.cur = Math.min(c.cur, Math.max(0, E.groupItems(c.items).length - 1)); return rerender();
     case 'ov-move': {
       const j = i + d; if (j < 0 || j >= c.items.length) return;
       [c.items[i], c.items[j]] = [c.items[j], c.items[i]];
@@ -1358,7 +1400,7 @@ document.addEventListener('click', ev => {
       const it = c.items[i]; if (!it || logged(it).length) return;
       const used = new Set(c.items.map(x => x.id));
       const partner = it.ss ? c.items.find(x => x !== it && x.ss === it.ss) : null;
-      const nid = c.home ? E.nextHome(it.id, used) : a === 'swap-ex' ? E.nextSameSetup(state, it.id, used, partner?.id) : E.nextSetup(state, it.id, used);
+      const nid = c.home ? E.nextHome(state, it.id, used) : a === 'swap-ex' ? E.nextSameSetup(state, it.id, used, partner?.id) : E.nextSetup(state, it.id, used);
       if (!nid) return;
       replaceEx(it, nid); return rerender();
     }
@@ -1398,10 +1440,20 @@ document.addEventListener('click', ev => {
     case 'prio': state.settings.priority[el.dataset.m] = el.dataset.v; replan(); return rerender();
     case 'xp': {   // spento → alta → media → bassa → spento
       if (Date.now() - (ui.longAt || 0) < 800) return;      // era una pressione lunga: si è aperta la scheda
-      const id = el.dataset.id; const m = EX[id].muscle; const p = state.settings.plan[m] = state.settings.plan[m] || {};
+      const id = el.dataset.id, home = !!el.dataset.home, m = EX[id].muscle;
+      const P = home ? state.settings.homePlan : state.settings.plan, p = P[m] = P[m] || {};
       const next = { 0: 3, 3: 2, 2: 1, 1: 0 }[p[id] || 0];
       if (next) p[id] = next; else delete p[id];
+      E.forgetChoice(state, id, home);   // scelta a mano: i punti delle scelte in seduta ripartono da zero
       replan(); return rerender();
+    }
+    case 'plan-place': ui.planHome = el.dataset.v === 'home'; return render();
+    case 'hdb-handle': state.settings.homeDb = { ...state.settings.homeDb, handle: +el.dataset.v }; replan(); return rerender();
+    case 'hdb-plate': {   // quanti dischi di quel peso: 0 → 2 → 4 → 6 → 8 → 0
+      const db = state.settings.homeDb, v = el.dataset.v, n = db.plates[v] || 0, plates = { ...db.plates };
+      if (n >= 8) delete plates[v]; else plates[v] = n + 2;
+      if (!Object.values(plates).some(x => x >= 2)) return toast('Serve almeno una coppia di dischi');
+      state.settings.homeDb = { ...db, plates }; replan(); return rerender();
     }
     case 'sound': state.settings.sound = el.dataset.v === 'off' ? false : el.dataset.v === 'loud' ? 'loud' : true; unlockAudio(); return rerender();
     case 'sound-test': unlockAudio(); chime(); return;
@@ -1440,7 +1492,7 @@ document.addEventListener('change', ev => {
   const c = state.current;
   switch (k) {
     case 'ov-add': if (el.value) {
-      c.items.push(newItem(el.value)); c.minutes = E.planMinutes(state, c);
+      c.items.push({ ...newItem(el.value), added: true }); c.minutes = E.planMinutes(state, c);
       if (hasLogs(c) || c.free || c.date !== today()) return go(E.groupItems(c.items).length - 1);   // durante l'allenamento si apre subito
     } break;
     case 'past-add': if (el.value) { openPast(el.dataset.k, el.value); save(); return go(E.groupItems(state.current.items).length - 1); } break;

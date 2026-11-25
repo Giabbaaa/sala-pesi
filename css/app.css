@@ -235,6 +235,7 @@ button.back { padding: 4px 2px; font-weight: 600; }
 .seg button { min-height: 34px; padding: 4px 12px; font-size: 14px; background: none; border-radius: 8px; }
 .seg button.on { background: var(--accent); color: #fff; font-weight: 600; }
 .seg.lv button.on { background: var(--lv); color: #12161c; }
+.seg.place { display: grid; grid-template-columns: 1fr 1fr; width: 100%; margin-bottom: 10px; }
 .alert { background: color-mix(in srgb, var(--l2) 22%, var(--card)); border: 1px solid color-mix(in srgb, var(--l2) 50%, transparent); border-radius: var(--radius); padding: 12px 14px; margin: 12px 0; }
 
 /* Priorità per esercizio: tocca per passare alta → media → bassa → spento */

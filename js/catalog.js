@@ -14,12 +14,12 @@ export const MUSCLES = {
   femorali:    { name: 'Femorali' },
   glutei:      { name: 'Glutei' },
   polpacci:    { name: 'Polpacci' },
-  // extra: si allena solo a casa, fuori dagli obiettivi settimanali e dal Piano
-  avambracci:  { name: 'Avambracci', extra: true },
+  avambracci:  { name: 'Avambracci' },
 };
 
-export const MUSCLE_ORDER = Object.keys(MUSCLES).filter(m => !MUSCLES[m].extra);
-export const ALL_MUSCLES = Object.keys(MUSCLES);
+// Un solo elenco dei muscoli per tutta l'app (Piano, obiettivi, barre, liste degli esercizi)
+export const MUSCLE_ORDER = Object.keys(MUSCLES);
+export const ALL_MUSCLES = MUSCLE_ORDER;
 
 const E = (id, name, muscle, type, work, sub, equip, how, extra = {}) =>
   ({ id, name, muscle, type, work, sub, equip, how, cues: how, ...extra });
@@ -281,16 +281,16 @@ export const EXERCISES = [
     'Sali stringendo il bicipite fino alla spalla.',
     'Scendi lento.',
     'Il braccio resta fermo sulla coscia: si muove solo l’avambraccio.'] ),
-  E('Cable_Hammer_Curls_-_Rope_Attachment', 'Curl a martello alla corda', 'bicipiti', 'iso', { bicipiti: 1 }, 'Hammer_Curls', 'cavo', [
+  E('Cable_Hammer_Curls_-_Rope_Attachment', 'Curl a martello alla corda', 'bicipiti', 'iso', { bicipiti: 1, avambracci: 0.5 }, 'Hammer_Curls', 'cavo', [
     'Davanti alla puleggia bassa con la corda, presa neutra (pollici in alto), gomiti ai fianchi.',
     'Sali verso le spalle tenendo i pollici in alto.',
     'Scendi lento fino a braccia distese.',
-    'Lavora molto brachiale e avambraccio: braccia più spesse.'], { base: true, also: ['brachiale', 'avambraccio'] }),
-  E('Hammer_Curls', 'Curl a martello manubri', 'bicipiti', 'iso', { bicipiti: 1 }, 'Cable_Hammer_Curls_-_Rope_Attachment', 'manubri', [
+    'Lavora molto brachiale e avambraccio: braccia più spesse.'], { base: true, also: ['brachiale'] }),
+  E('Hammer_Curls', 'Curl a martello manubri', 'bicipiti', 'iso', { bicipiti: 1, avambracci: 0.5 }, 'Cable_Hammer_Curls_-_Rope_Attachment', 'manubri', [
     'In piedi, manubri lungo i fianchi con i palmi che si guardano.',
     'Sali tenendo i pollici in alto, alternando o insieme.',
     'Scendi lento.',
-    'Gomiti fermi ai fianchi.'], { also: ['brachiale', 'avambraccio'] }),
+    'Gomiti fermi ai fianchi.'], { also: ['brachiale'] }),
 
   // ---------- Tricipiti ----------
   E('Triceps_Pushdown_-_Rope_Attachment', 'Tricipiti alla corda', 'tricipiti', 'iso', { tricipiti: 1 }, 'Triceps_Pushdown', 'cavo', [
@@ -540,12 +540,12 @@ export const EXERCISES = [
     'Porta le ginocchia verso il petto staccando il bacino da terra, espirando.',
     'Scendi lento senza appoggiare i piedi.',
     'Muovi il bacino, non dare slancio con le gambe.'], { home: true }),
-  E('Seated_Dumbbell_Palms-Up_Wrist_Curl', 'Flessioni del polso', 'avambracci', 'iso', { avambracci: 1 }, 'Seated_Dumbbell_Palms-Down_Wrist_Curl', 'manubri', [
+  E('Seated_Dumbbell_Palms-Up_Wrist_Curl', 'Flessioni del polso', 'avambracci', 'core', { avambracci: 1 }, 'Seated_Dumbbell_Palms-Down_Wrist_Curl', 'manubri', [
     'Seduto sulla sedia, avambracci appoggiati sulle cosce, polsi appena oltre le ginocchia, palmi verso l’alto.',
     'Lascia scendere il manubrio piegando il polso, anche facendolo rotolare un po’ verso le dita.',
     'Richiudi il polso verso l’alto stringendo.',
-    'Si muove solo il polso. Ripetizioni alte, 15–25.'], { home: true, also: ['presa'] }),
-  E('Seated_Dumbbell_Palms-Down_Wrist_Curl', 'Estensioni del polso', 'avambracci', 'iso', { avambracci: 1 }, 'Seated_Dumbbell_Palms-Up_Wrist_Curl', 'manubri', [
+    'Si muove solo il polso, con ripetizioni alte.'], { home: true, also: ['presa'] }),
+  E('Seated_Dumbbell_Palms-Down_Wrist_Curl', 'Estensioni del polso', 'avambracci', 'core', { avambracci: 1 }, 'Seated_Dumbbell_Palms-Up_Wrist_Curl', 'manubri', [
     'Seduto sulla sedia, avambracci sulle cosce, palmi verso il basso, polsi oltre le ginocchia.',
     'Solleva il dorso della mano verso l’alto.',
     'Scendi lento.',
@@ -567,7 +567,8 @@ const HOME_NOTES = {
 export const EX = Object.fromEntries(EXERCISES.map(e => [e.id, e]));
 for (const [id, n] of Object.entries(HOME_NOTES)) EX[id].homeNote = n;
 
-// Esercizi per l'allenamento a casa e loro priorità (3 sempre, 2 a rotazione, 1 ogni tanto)
+// Esercizi che si possono fare a casa (manubri, tappetino, sedia) e loro priorità predefinite
+// (3 sempre, 2 a rotazione, 1 ogni tanto). Le priorità si cambiano in Piano → A casa (settings.homePlan).
 export const HOME_PLAN = {
   petto:       { Dumbbell_Floor_Press: 3, 'Push-Ups_With_Feet_Elevated': 3, Pushups: 1 },
   laterali:    { Side_Lateral_Raise: 3, 'One-Arm_Side_Laterals': 2, Dumbbell_Shoulder_Press: 1 },
@@ -580,7 +581,7 @@ export const HOME_PLAN = {
   femorali:    { 'Stiff-Legged_Dumbbell_Deadlift': 3 },
   glutei:      { Butt_Lift_Bridge: 3 },
   polpacci:    { Standing_Dumbbell_Calf_Raise: 3 },
-  avambracci:  { 'Seated_Dumbbell_Palms-Up_Wrist_Curl': 3, 'Seated_Dumbbell_Palms-Down_Wrist_Curl': 3 },
+  avambracci:  { 'Seated_Dumbbell_Palms-Up_Wrist_Curl': 3, 'Seated_Dumbbell_Palms-Down_Wrist_Curl': 2 },
 };
 for (const m of Object.keys(HOME_PLAN)) for (const id of Object.keys(HOME_PLAN[m])) EX[id].home = true;
 
@@ -606,7 +607,7 @@ export const TYPE_RULES = {
 export const DEFAULT_PRIORITY = {
   petto: 'alta', laterali: 'alta', bicipiti: 'alta', tricipiti: 'alta',
   schiena: 'normale', posteriori: 'normale', addome: 'normale',
-  quadricipiti: 'minima', femorali: 'minima', glutei: 'minima', polpacci: 'minima',
+  quadricipiti: 'minima', femorali: 'minima', glutei: 'minima', polpacci: 'minima', avambracci: 'minima',
 };
 
 // Obiettivi di serie nella finestra di 7 giorni, per ciclo
@@ -629,6 +630,7 @@ export const DEFAULT_PLAN = {
   femorali:    { Seated_Leg_Curl: 3 },
   glutei:      { Thigh_Abductor: 3 },
   polpacci:    { Calf_Press_On_The_Leg_Press_Machine: 3 },
+  avambracci:  { 'Seated_Dumbbell_Palms-Up_Wrist_Curl': 3, 'Seated_Dumbbell_Palms-Down_Wrist_Curl': 2 },
 };
 
 export const EQUIP_GROUPS = [

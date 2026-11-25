@@ -41,6 +41,8 @@ export function initialState() {
       office: [1, 2, 3, 4, 5],       // giorni in cui pranza con la mensa (0 = domenica)
       // manubri di casa (foto di Giabba 25/11): due manici e dischi da 2, 1,5 e 1,25 kg, 4 per tipo
       homeDb: { handle: 0.5, plates: { 2: 4, 1.5: 4, 1.25: 4 } },
+      homePlan: JSON.parse(JSON.stringify(HOME_PLAN)),   // priorità degli esercizi a casa (Piano → A casa)
+      learn: {},                     // punti delle scelte fatte durante le sedute ('g:id' palestra, 'h:id' casa): { s, d }
     },
     sessions: [],
     current: null,
@@ -124,6 +126,8 @@ export function migrate(s) {
   out.settings = { ...base.settings, ...(s.settings || {}) };
   out.settings.priority = { ...base.settings.priority, ...(out.settings.priority || {}) };
   out.settings.plan = { ...base.settings.plan, ...(out.settings.plan || {}) };
+  out.settings.homePlan = { ...base.settings.homePlan, ...(out.settings.homePlan || {}) };
+  for (const m of Object.keys(out.settings.homePlan)) for (const id of Object.keys(out.settings.homePlan[m])) if (!EX[id]?.home) delete out.settings.homePlan[m][id];
   // vecchio formato { anchor, comp } → priorità per esercizio (3 alta, 2 media, 1 bassa)
   for (const m of Object.keys(out.settings.plan)) {
     const p = out.settings.plan[m];
@@ -199,6 +203,49 @@ export function stepLoad(state, id, kg, d) {
 export const exPrio = (state, id) => (state.settings.plan[EX[id]?.muscle] || {})[id] || 0;
 export const anchorsOf = (state, m) => EXERCISES.filter(e => e.muscle === m && !e.hidden && exPrio(state, e.id) === 3).map(e => e.id);
 export const poolOf = (state, m) => EXERCISES.filter(e => e.muscle === m && !e.hidden && exPrio(state, e.id) > 0).map(e => e.id);
+
+// ---------- Priorità che imparano dalle scelte fatte durante la seduta ----------
+// Un esercizio proposto e cambiato con un altro (che poi fai davvero): il nuovo prende un punto, quello lasciato ne
+// perde uno. Un esercizio aggiunto a mano e fatto prende un punto, uno proposto e tolto ne perde uno.
+// A +2 punti la priorità sale di un livello (da "mai" si entra direttamente a rotazione), a −2 scende di uno, mai
+// fino a "mai": resta una possibilità. Se così il muscolo perde il suo esercizio "sempre", lo diventa quello scelto
+// al suo posto. Punti fermi da più di 4 settimane si azzerano: conta come scegli adesso.
+// Cambiare a mano la priorità in Piano azzera i punti di quell'esercizio. A casa vale lo stesso, sulle priorità di casa.
+export const LEARN_STEP = 2, LEARN_DAYS = 28;
+export const learnKey = (id, home) => (home ? 'h:' : 'g:') + id;
+export function learnChoice(state, { chosen = null, rejected = null, home = false, today = dayKey() } = {}) {
+  const S = state.settings, L = S.learn = S.learn || {};
+  const plan = home ? (S.homePlan = S.homePlan || JSON.parse(JSON.stringify(HOME_PLAN))) : S.plan;
+  const ok = id => id && id !== 'cardio' && EX[id] && !EX[id].hidden && EX[id].muscle && (!home || EX[id].home);
+  const pr = id => (plan[EX[id].muscle] || {})[id] || 0;
+  const hadAnchor = ok(rejected) && pr(rejected) === 3 && Object.values(plan[EX[rejected].muscle] || {}).filter(p => p === 3).length === 1;
+  const changes = [];
+  const set = (id, to) => {
+    const m = EX[id].muscle, p = plan[m] = plan[m] || {}, from = p[id] || 0;
+    if (to === from) return;
+    p[id] = to;
+    const ch = changes.find(x => x.id === id);
+    if (ch) ch.to = to; else changes.push({ id, from, to });
+  };
+  const bump = (id, d) => {
+    if (!ok(id)) return;
+    const k = learnKey(id, home), old = L[k] && diffDays(today, L[k].d) <= LEARN_DAYS ? L[k].s : 0;
+    let s = old + d;
+    const from = pr(id);
+    if (s >= LEARN_STEP) { set(id, from === 0 ? 2 : Math.min(3, from + 1)); s = 0; }
+    else if (s <= -LEARN_STEP) { set(id, Math.max(1, from - 1)); s = 0; }
+    L[k] = { s, d: today };
+  };
+  bump(rejected, -1);
+  bump(chosen, +1);
+  // il muscolo aveva un solo esercizio "sempre" ed è sceso: lo sostituisce quello scelto al suo posto
+  if (hadAnchor && pr(rejected) < 3 && ok(chosen) && EX[chosen].muscle === EX[rejected].muscle && pr(chosen) < 3) {
+    set(chosen, 3); L[learnKey(chosen, home)] = { s: 0, d: today };
+  }
+  return changes;
+}
+// Priorità cambiata a mano in Piano: i punti di quell'esercizio ripartono da zero
+export function forgetChoice(state, id, home = false) { if (state.settings.learn) delete state.settings.learn[learnKey(id, home)]; }
 
 // ---------- Postazioni e cambi ----------
 // Postazione: dove si fa l'esercizio. Cavi, manubri, bilanciere e corpo libero sono una postazione
@@ -368,7 +415,8 @@ export function recommendedDays(state, today = dayKey(), count = 6) {
     }
     return relaxed;
   };
-  const last = state.sessions.length ? state.sessions[state.sessions.length - 1].date : null;
+  // l'ultima seduta vera: una mini a casa o pochi esercizi extra non spostano il calendario
+  const real = state.sessions.filter(counts), last = real.length ? real[real.length - 1].date : null;
   let cand = last ? next(last, addDays(last, 1)) : null;
   if (!cand || cand < today) cand = next(null, today);      // seduta saltata: primo giorno utile da oggi
   const out = [];
@@ -433,7 +481,8 @@ export function targetFor(state, m) {
 // ---------- Progressione carichi (doppia progressione) ----------
 export function stalled(state, id) {
   const lastDeload = [...state.sessions].reverse().find(s => s.deload)?.date || '';
-  const h = history(state, id).filter(p => !p.deload && p.date > lastDeload);
+  // solo in palestra: a casa i manubri arrivano a pochi chili e si sale con le ripetizioni
+  const h = history(state, id).filter(p => !p.deload && !p.home && p.date > lastDeload);
   if (h.length < 4) return false;
   // a tempo o a corpo libero il "carico" sono le ripetizioni (o i secondi)
   const score = ['time', 'bw'].includes(EX[id]?.type) ? sets => Math.max(...sets.map(x => x.reps)) : bestE1rm;
@@ -591,7 +640,21 @@ function makeItem(state, id, sets, today, home = false) {
 export function seedSession(state, today) {
   const lastSeed = [...state.sessions].reverse().find(s => s.seed)?.seed;
   const which = lastSeed === 'A' ? 'B' : 'A';
-  const items = SEED[which].map(x => ({ ...makeItem(state, x.id, x.sets, today), ss: x.ss ? `${which}${x.ss}` : null }));
+  // un esercizio che hai messo a "mai" in Piano lascia il posto al preferito dello stesso muscolo (stesso tipo, se c'è)
+  const used = new Set(SEED[which].map(x => x.id));
+  const pick = x => {
+    const def = (DEFAULT_PLAN[EX[x.id].muscle] || {})[x.id] || 0;
+    if (!(def > 0 && exPrio(state, x.id) === 0)) return x;
+    const list = muscleList(state, EX[x.id].muscle, e => exPrio(state, e.id) > 0 && !used.has(e.id));
+    const nid = list.find(id => EX[id].type === EX[x.id].type) || list[0];
+    if (!nid) return null;
+    used.add(nid);
+    return { ...x, id: nid, ss: null };
+  };
+  const chosen = SEED[which].map(x => pick({ ...x })).filter(Boolean);
+  // una superserie resta solo se tutti e due gli esercizi ci sono ancora
+  for (const x of chosen) if (x.ss && chosen.filter(y => y.ss === x.ss).length < 2) x.ss = null;
+  const items = chosen.map(x => ({ ...makeItem(state, x.id, x.sets, today), ss: x.ss ? `${which}${x.ss}` : null }));
   return { items, seed: which, reason: `Seduta tipo ${which}: le prime sedute servono a fissare i carichi di partenza` };
 }
 
@@ -1128,10 +1191,11 @@ export const homeStep = (state, id, kg, d) => {
   if (d > 0) return L.find(v => v > (kg ?? 0) + 0.01) ?? L[L.length - 1];
   return [...L].reverse().find(v => v < (kg ?? 0) - 0.01) ?? L[0];
 };
-// "Cambia esercizio" a casa: il prossimo esercizio di casa per lo stesso muscolo
-export function nextHome(id, used = new Set()) {
-  const m = Object.keys(HOME_PLAN).find(k => id in HOME_PLAN[k]) || EX[id]?.muscle;
-  const ring = Object.keys(HOME_PLAN[m] || {}); const at = ring.indexOf(id);
+// "Cambia esercizio" a casa: il prossimo esercizio di casa dello stesso muscolo (prima i più prioritari)
+const homeState = state => ({ ...state, settings: { ...state.settings, plan: state.settings.homePlan || HOME_PLAN } });
+export function nextHome(state, id, used = new Set()) {
+  const hs = homeState(state);
+  const ring = muscleList(hs, EX[id]?.muscle, x => x.home); const at = ring.indexOf(id);
   return [...ring.slice(at + 1), ...ring.slice(0, Math.max(0, at))].find(x => x !== id && !used.has(x)) || null;
 }
 export const homeSide = (state, id, kg) => homeLoads(state, homeSingle(id)).find(x => Math.abs(x.kg - kg) < 0.01)?.side || null;
@@ -1169,7 +1233,7 @@ export function homeItem(state, id, sets, today) {
 // kind 'mini': 15–20 minuti sui muscoli più indietro nei 7 giorni, che non hanno lavorato nelle ultime 36 ore
 // e che non lavoreranno in palestra domani. kind 'full': una seduta completa al posto della palestra (45').
 export function composeHome(state, today = dayKey(), now = Date.now(), kind = 'mini') {
-  const hs = { ...state, settings: { ...state.settings, plan: HOME_PLAN } };
+  const hs = homeState(state);
   if (kind === 'full') {
     const res = dynamicSession(hs, today, now, 45);
     const items = res.items.filter(i => i.id !== 'cardio').map(i => ({ ...homeItem(hs, i.id, i.planSets, today), ss: i.ss }));
@@ -1183,18 +1247,15 @@ export function composeHome(state, today = dayKey(), now = Date.now(), kind = 'm
     let f = null; try { f = forecast(state, tomorrow, null, today); } catch { f = null; }
     for (const it of f?.items || []) for (const [m, w] of Object.entries(EX[it.id]?.work || {})) if (w >= 1) busy.add(m);
   }
-  const forearm7 = state.sessions.filter(x => x.date >= addDays(today, -6) && x.date < today)
-    .reduce((a, x) => a + x.items.filter(i => EX[i.id]?.muscle === 'avambracci').reduce((b, i) => b + workSets(i).length, 0), 0);
   const AESTHETIC = ['laterali', 'tricipiti', 'bicipiti', 'posteriori', 'petto', 'addome', 'polpacci', 'avambracci'];
-  const cand = AESTHETIC.filter(m => !busy.has(m) && hoursSince(state, m, now) >= 36).map(m => {
-    const target = m === 'avambracci' ? 4 : ctx.target[m], done = m === 'avambracci' ? forearm7 : ctx.win7[m];
-    const prio = m === 'avambracci' ? 1 : { alta: 3, normale: 2, minima: 1 }[state.settings.priority[m] || 'normale'];
-    return { m, score: (1 - done / target) * (1 + prio / 3) };
+  const cand = AESTHETIC.filter(m => !busy.has(m) && hoursSince(state, m, now) >= 36 && poolOf(hs, m).length).map(m => {
+    const prio = { alta: 3, normale: 2, minima: 1 }[state.settings.priority[m] || 'normale'];
+    return { m, score: (1 - ctx.win7[m] / ctx.target[m]) * (1 + prio / 3) };
   }).filter(x => x.score > 0).sort((a, b) => b.score - a.score);
   // tre esercizi da tre serie, in superserie dove si può (bicipiti + tricipiti, laterali + posteriori)
   const pick = cand.slice(0, 3).map(x => x.m);
   const items = pick.map(m => {
-    const pool = Object.entries(HOME_PLAN[m]).sort((a, b) => b[1] - a[1] || lastUse(state, a[0]) - lastUse(state, b[0]));
+    const pool = poolOf(hs, m).map(id => [id, exPrio(hs, id)]).sort((a, b) => b[1] - a[1] || lastUse(state, a[0]) - lastUse(state, b[0]));
     // àncora una volta e complementare la volta dopo, come in palestra
     const top = pool.filter(([, p]) => p === pool[0][1]).map(([id]) => id);
     const comp = pool.filter(([, p]) => p === 2).map(([id]) => id);
