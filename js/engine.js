@@ -606,6 +606,9 @@ export function compose(state, today = dayKey(), now = Date.now(), duration = nu
     res = seedSession(state, today);
     res.want = pairedMinutes(state, res.items, warm, false);
     res.cut = fitTime(state, res.items, windowCtx(state, today), dur + 2, warm, false);
+    // il tempo che avanza va al cardio (fino a 30 minuti), come nelle sedute dinamiche
+    const left = dur - itemMinutes(res.items, warm);
+    if (left >= 10) { res.items.push({ id: 'cardio', minutes: Math.min(30, Math.floor(left / 5) * 5), planSets: 0, sets: [], skipped: false, ss: null }); res.reason += ' · cardio in coda'; }
   } else res = dynamicSession(state, today, now, dur);
   if (deload) {
     res.items.forEach(it => { if (it.id !== 'cardio') it.planSets = Math.max(1, Math.round(it.planSets / 2)); });

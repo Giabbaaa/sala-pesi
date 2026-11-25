@@ -372,7 +372,7 @@ function dayBody(t, day, c) {
   const show = (c && (c.forced || hasLogs(c))) || (rec[0] === t && state.skipDay !== t) || todaySession();
   if (!show) {
     const nx = E.nextLabel(state, t);
-    html += `<section class="card"><h3>Oggi riposo</h3>
+    html += `<section class="card" data-place><h3>Oggi riposo</h3>
       <p class="muted">${nx && nx !== 'oggi' ? `Prossimo allenamento ${esc(nx)}. ` : ''}Il recupero fa crescere il muscolo quanto l’allenamento.</p>
       <p class="small muted" style="margin-top:12px">Allenamento a casa, con manubri e tappetino:</p>
       <div class="row" style="gap:8px;margin-top:6px;flex-wrap:wrap"><button data-act="home-start" data-v="mini">Mini · 20′</button><button data-act="home-start" data-v="full">Completo · 45′</button><button class="ghost" data-act="force">In palestra</button></div>
@@ -596,7 +596,7 @@ function overview(c) {
   const nextName = nextG >= 0 ? (groups[nextG].items[0].id === 'cardio' ? 'Cardio extra' : EX[groups[nextG].items[0].id].name) : '';
   const isToday = c.date === today();
   const dur = c.duration || E.usualMinutes(state);
-  return `<section class="card" data-lp="plan">
+  return `<section class="card" data-lp="plan"${isToday ? ' data-place' : ''}>
     ${isToday ? '' : `<div class="row between" style="margin-bottom:6px"><span class="small muted">Stai modificando un giorno passato</span><button class="ghost" data-act="past-close">Fine</button></div>`}
     <h3 class="t-warn">${!isToday ? `Allenamento di ${dayLabel(c.date).toLowerCase()}` : c.home === 'mini' ? 'Mini a casa' : c.home ? 'Seduta a casa' : c.free ? 'Esercizi di oggi' : 'Seduta di oggi'}${c.deload ? ' · scarico' : ''}</h3>
     ${c.free || !isToday ? '' : `<p class="reason">${esc(c.reason)}</p>`}
@@ -1049,7 +1049,7 @@ function viewImpostazioni() {
         <button class="ghost" data-act="snap" data-k="${x.k}">${ui.confirmSnap === x.k ? 'Conferma' : 'Ripristina'}</button></div>`; }).join('')}` : ''}
     <button class="danger" style="margin-top:14px" data-act="reset">${ui.confirmReset ? 'Tocca di nuovo per cancellare tutto' : 'Cancella tutti i dati'}</button>
   </section>
-  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.17 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.18 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
 }
 
 // ---------- Render ----------
@@ -1102,10 +1102,28 @@ function render() {
   view.innerHTML = `<div class="screen ${kind ? `enter-${kind}` : ''}">${VIEWS[ui.tab]()}</div>`;
   if (flips.size && !kind) view.querySelectorAll('.flip[data-id]').forEach(f => { const o = flips.get(f.dataset.id); if (o) f.replaceWith(o); });
   if (ui.toTop) { view.scrollTop = 0; ui.toTop = false; }
+  if (ui.placeIn) placeIn(view.querySelector('[data-place]'));
   placeStrip();
   renderSheet();
   if (state.current?.view !== 'ex' && !state.rest) keepAwake(false);
   tickTimer();
+}
+
+// Passaggio palestra ⇄ casa: la scheda scivola via da un lato e la seduta nuova entra dall'altro
+// (verso casa a sinistra, verso la palestra a destra), il titolo nuovo con un piccolo scatto
+function placeSwap(apply, dir = 1) {
+  const old = $('#view [data-place]');
+  const go = () => { apply(); ui.placeIn = dir; render(); };
+  if (reduced() || !old?.animate) return go();
+  let done = false; const fin = () => { if (!done) { done = true; go(); } };
+  const a = old.animate([{ transform: 'none', opacity: 1 }, { transform: `translateX(${-dir * 64}px) scale(.97)`, opacity: 0 }], { duration: 170, easing: 'cubic-bezier(.5, 0, 1, .6)', fill: 'forwards' });
+  a.onfinish = fin; setTimeout(fin, 400);
+}
+function placeIn(el) {
+  const dir = ui.placeIn; ui.placeIn = 0;
+  if (!el?.animate || reduced()) return;
+  el.animate([{ transform: `translateX(${dir * 64}px) scale(.97)`, opacity: 0 }, { transform: `translateX(${-dir * 5}px)`, opacity: 1, offset: .7 }, { transform: 'none' }], { duration: 340, easing: 'cubic-bezier(.2, .7, .3, 1)' });
+  el.querySelector('h3')?.animate([{ transform: 'scale(.8)', transformOrigin: 'left center', opacity: 0 }, { transform: 'scale(1.06)', transformOrigin: 'left center', opacity: 1, offset: .7 }, { transform: 'none', transformOrigin: 'left center' }], { duration: 420, delay: 110, easing: 'ease-out', fill: 'backwards' });
 }
 
 // ---------- Scheda esercizio a comparsa (tenendo premuto in Piano) ----------
@@ -1258,9 +1276,14 @@ document.addEventListener('click', ev => {
     case 'home-start': {
       const h = E.composeHome(state, today(), Date.now(), el.dataset.v);
       if (!h.items.length) { toast('Oggi non c’è niente da recuperare: riposo'); return; }
-      state.current = h; state.current.minutes = E.planMinutes(state, h); save(); toTop(); return render();
+      return placeSwap(() => { state.current = h; state.current.minutes = E.planMinutes(state, h); save(); toTop(); });
     }
-    case 'force': delete state.skipDay; state.current = E.compose(state, today()); state.current.forced = true; save(); return render();
+    case 'force': case 'go-gym': return placeSwap(() => {   // in palestra: dal giorno di riposo o da una seduta a casa
+      const t = today(); delete state.skipDay;
+      state.current = E.compose(state, t, Date.now(), ui.dur?.date === t ? ui.dur.min : null);
+      state.current.forced = a === 'force' || E.recommendedDays(state, t)[0] !== t;
+      state.current.minutes = E.planMinutes(state, state.current); save();
+    }, -1);
     case 'lp-info': ui.sheet = el.dataset.id; return renderSheet();
     case 'plan-del': {   // dalla pressione lunga su "Seduta di oggi": via le serie segnate (se ci sono) e la seduta
       const s0 = c && state.sessions.find(x => x.date === c.date);
@@ -1495,7 +1518,8 @@ function lpMenu(el) {
     if (!c) return false;
     const isToday = c.date === today();
     title = isToday ? (c.home ? 'Allenamento a casa' : 'Seduta di oggi') : `Allenamento di ${dayLabel(c.date).toLowerCase()}`;
-    if (isToday && !hasLogs(c) && !c.home && !c.free) items.push({ act: 'home-start', label: 'Falla a casa, con i manubri', attrs: 'data-v="full"' });
+    // casa ⇄ palestra: si offre l'altro posto rispetto a com'è impostata ora
+    if (isToday && !hasLogs(c) && !c.free) items.push(c.home ? { act: 'go-gym', label: 'Falla in palestra' } : { act: 'home-start', label: 'Falla a casa, con i manubri', attrs: 'data-v="full"' });
     if (isToday && !hasLogs(c) && !c.free) items.push({ act: 'recompose', label: 'Ricomponi la seduta' });
     items.push({ act: 'plan-del', label: hasLogs(c) ? 'Elimina la seduta e le serie segnate' : 'Elimina la seduta', danger: true });
   }
