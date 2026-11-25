@@ -1,6 +1,6 @@
 // Logica dell'app: composizione dinamica della seduta, progressione dei carichi,
 // calendario consigliato, cicli, stime. Nessun accesso al DOM: testabile in Node.
-import { EX, EXERCISES, MUSCLES, MUSCLE_ORDER, TYPE_RULES, TARGETS, DEFAULT_PRIORITY, DEFAULT_PLAN, START_LOADS, SEED, EQUIP_ORDER } from './catalog.js';
+import { EX, EXERCISES, MUSCLES, MUSCLE_ORDER, TYPE_RULES, TARGETS, DEFAULT_PRIORITY, DEFAULT_PLAN, START_LOADS, SEED, EQUIP_ORDER, HOME_PLAN } from './catalog.js';
 
 // ---------- Date ----------
 export const pad = n => String(n).padStart(2, '0');
@@ -39,6 +39,8 @@ export function initialState() {
       plates: [20, 10, 5, 2.5, 1.25],
       sessionMinutes: 60,            // durata abituale della seduta (si può cambiare ogni giorno)
       office: [1, 2, 3, 4, 5],       // giorni in cui pranza con la mensa (0 = domenica)
+      // manubri di casa (foto di Giabba 25/11): due manici e dischi da 2, 1,5 e 1,25 kg, 4 per tipo
+      homeDb: { handle: 0.5, plates: { 2: 4, 1.5: 4, 1.25: 4 } },
     },
     sessions: [],
     current: null,
@@ -294,7 +296,7 @@ export function history(state, id) {
   const out = [];
   for (let i = state.sessions.length - 1; i >= 0; i--) {
     const s = state.sessions[i];
-    for (const it of s.items) if (it.id === id && workSets(it).length) out.push({ date: s.date, deload: !!s.deload, sets: workSets(it) });
+    for (const it of s.items) if (it.id === id && workSets(it).length) out.push({ date: s.date, deload: !!s.deload, home: !!s.home, sets: workSets(it) });
   }
   return out;
 }
@@ -309,7 +311,7 @@ export function setsByMuscle(state, from, to) {
     for (const it of s.items) {
       const n = workSets(it).length; const e = EX[it.id];
       if (!n || !e) continue;
-      for (const [m, w] of Object.entries(e.work)) acc[m] += n * w;
+      for (const [m, w] of Object.entries(e.work)) if (m in acc) acc[m] += n * w;
     }
   }
   return acc;
@@ -447,10 +449,12 @@ export function longestBreak(state, from, today = dayKey()) {
   return max;
 }
 
-export function suggestion(state, id, today = dayKey()) {
+export function suggestion(state, id, today = dayKey(), home = false) {
   const e = EX[id]; const r = TYPE_RULES[e.type];
   const down = (k0, f) => { const k = snapLoad(state, id, k0 * f); return k < k0 ? k : stepLoad(state, id, k0, -1); };
-  const h = history(state, id).filter(p => !p.deload);
+  // a casa si parte da quello fatto a casa, in palestra da quello fatto in palestra (se c'è)
+  const all = history(state, id).filter(p => !p.deload), same = all.filter(p => p.home === home);
+  const h = same.length ? same : all;
   const isTime = e.type === 'time';
   const noKg = isTime || e.type === 'bw';            // a tempo o a corpo libero: si progredisce con tempo/ripetizioni
   if (!h.length) {
@@ -579,8 +583,8 @@ function sinceUse(state, id, m) {
   return Infinity;
 }
 
-function makeItem(state, id, sets, today) {
-  const sg = suggestion(state, id, today);
+function makeItem(state, id, sets, today, home = false) {
+  const sg = suggestion(state, id, today, home);
   return { id, planSets: sets, kg: sg.kg, reps: sg.reps, note: sg.note, ss: null, sets: [], skipped: false };
 }
 
@@ -951,7 +955,7 @@ export function recordDay(state, cur, now = Date.now()) {
     // durata scelta per la seduta e minuti che il piano chiedeva prima dei tagli (servono a capire se il livello sta nel tempo)
     if (cur.duration) s.duration = cur.duration;
     if (cur.want) s.want = cur.want;
-    Object.assign(s, { items, start, end, minutes, deload: !!cur.deload, seed: cur.seed || null, mini: nWork < MINI_SETS, free: !!cur.free,
+    Object.assign(s, { items, start, end, minutes, deload: !!cur.deload, seed: cur.seed || null, mini: nWork < MINI_SETS || cur.home === 'mini', free: !!cur.free, home: cur.home || null,
       frac: planned.length ? planned.filter(isItemDone).length / planned.length : 1,
       kcal: kcalRange(state, minutes, { superset: items.some(i => i.ss), hard }) });
     const others = { sessions: state.sessions.filter(x => x !== s) };
@@ -1092,3 +1096,112 @@ export function mensaRank(menu, training) {
   return (pool.length ? pool : all).slice().sort((a, b) => score(b) - score(a));
 }
 export const isOfficeDay = (state, day) => (state.settings.office || [1, 2, 3, 4, 5]).includes(parseDay(day).getDay());
+
+// ---------- Allenamento a casa ----------
+// Manubri componibili: un manubrio = manico + gli stessi dischi sui due lati. In coppia ogni lato può avere
+// un quarto dei dischi di ogni tipo; con un manubrio solo, la metà.
+const HOME_SINGLE = ['Goblet_Squat', 'Standing_Dumbbell_Triceps_Extension', 'One-Arm_Dumbbell_Row', 'One-Arm_Side_Laterals', 'Concentration_Curls', 'Standing_Dumbbell_Calf_Raise'];
+export const homeSingle = id => HOME_SINGLE.includes(id);
+export function homeLoads(state, single = false) {
+  const db = state.settings.homeDb || { handle: 0.5, plates: { 2: 4, 1.5: 4, 1.25: 4 } };
+  const sizes = Object.entries(db.plates).map(([k, n]) => [+k, Math.floor(n / (single ? 2 : 4))]).filter(([, n]) => n > 0);
+  let combos = [[]];
+  for (const [p, n] of sizes) combos = combos.flatMap(c => Array.from({ length: n + 1 }, (_, i) => [...c, ...Array(i).fill(p)]));
+  const by = new Map();
+  for (const side of combos) {
+    const kg = Math.round((db.handle + 2 * side.reduce((a, b) => a + b, 0)) * 100) / 100;
+    const old = by.get(kg);
+    if (!old || side.length < old.length) by.set(kg, side.sort((a, b) => b - a));   // a parità di peso, meno dischi
+  }
+  return [...by.entries()].sort((a, b) => a[0] - b[0]).map(([kg, side]) => ({ kg, side }));
+}
+// Peso più vicino fattibile con i manubri di casa
+export const homeSnap = (state, id, kg) => {
+  const L = homeLoads(state, homeSingle(id));
+  return L.reduce((a, b) => Math.abs(b.kg - kg) < Math.abs(a.kg - kg) ? b : a).kg;
+};
+export const homeStep = (state, id, kg, d) => {
+  const L = homeLoads(state, homeSingle(id)).map(x => x.kg);
+  if (d > 0) return L.find(v => v > (kg ?? 0) + 0.01) ?? L[L.length - 1];
+  return [...L].reverse().find(v => v < (kg ?? 0) - 0.01) ?? L[0];
+};
+// "Cambia esercizio" a casa: il prossimo esercizio di casa per lo stesso muscolo
+export function nextHome(id, used = new Set()) {
+  const m = Object.keys(HOME_PLAN).find(k => id in HOME_PLAN[k]) || EX[id]?.muscle;
+  const ring = Object.keys(HOME_PLAN[m] || {}); const at = ring.indexOf(id);
+  return [...ring.slice(at + 1), ...ring.slice(0, Math.max(0, at))].find(x => x !== id && !used.has(x)) || null;
+}
+export const homeSide = (state, id, kg) => homeLoads(state, homeSingle(id)).find(x => Math.abs(x.kg - kg) < 0.01)?.side || null;
+
+// Carico e ripetizioni a casa: quello che direbbe la palestra, portato ai pesi dei manubri.
+// Al peso massimo si sale con le ripetizioni (fino a 25): con carichi leggeri il muscolo cresce lo stesso
+// se si arriva vicino al limite (meta-analisi Schoenfeld 2017).
+// Primo carico a casa (stime per manubri leggeri: meglio partire facili e salire con le ripetizioni)
+const HOME_START = { Dumbbell_Floor_Press: 10, Side_Lateral_Raise: 4.5, 'One-Arm_Side_Laterals': 4.5, Reverse_Flyes: 4.5, Hammer_Curls: 7,
+  Dumbbell_Bicep_Curl: 7, Concentration_Curls: 7, Standing_Dumbbell_Triceps_Extension: 10, Tricep_Dumbbell_Kickback: 4.5, 'One-Arm_Dumbbell_Row': 14.5,
+  Dumbbell_Shoulder_Press: 7.5, Goblet_Squat: 14.5, 'Stiff-Legged_Dumbbell_Deadlift': 10, Standing_Dumbbell_Calf_Raise: 10,
+  'Seated_Dumbbell_Palms-Up_Wrist_Curl': 6, 'Seated_Dumbbell_Palms-Down_Wrist_Curl': 3 };
+export function homeItem(state, id, sets, today) {
+  const it = makeItem(state, id, sets, today, true);
+  const e = EX[id];
+  if (e.equip !== 'manubri') return { ...it, home: true };
+  const r = TYPE_RULES[e.type];
+  const L = homeLoads(state, homeSingle(id)).map(x => x.kg), max = L[L.length - 1];
+  const hh = history(state, id).filter(p => p.home), last = hh[0];
+  const prev = last?.sets?.[0]?.kg || 0;
+  let kg = it.kg, reps = it.reps, note = it.note;
+  if (!last) {   // prima volta a casa: carico di partenza, ripetizioni alte
+    kg = homeSnap(state, id, Math.min(HOME_START[id] ?? 4.5, kg || 99));
+    reps = Math.max(reps, r.min + 4); note = 'Prima volta a casa: prova il peso e fermati a 1–3 ripetizioni dal limite';
+  } else if (kg > max + 0.01 || (Math.abs(prev - max) < 0.01 && kg >= max)) {
+    kg = max;
+    const atMax = Math.abs(prev - max) < 0.01;
+    reps = atMax ? Math.min(25, Math.min(...last.sets.map(x => x.reps)) + 1) : r.max;
+    note = 'Manubri al peso massimo: una ripetizione in più ogni volta, fino a 25';
+  } else if (kg > prev + 0.01) kg = L.find(v => v > prev + 0.01) ?? max;
+  else kg = homeSnap(state, id, kg);
+  return { ...it, kg, reps, note, home: true };
+}
+
+// kind 'mini': 15–20 minuti sui muscoli più indietro nei 7 giorni, che non hanno lavorato nelle ultime 36 ore
+// e che non lavoreranno in palestra domani. kind 'full': una seduta completa al posto della palestra (45').
+export function composeHome(state, today = dayKey(), now = Date.now(), kind = 'mini') {
+  const hs = { ...state, settings: { ...state.settings, plan: HOME_PLAN } };
+  if (kind === 'full') {
+    const res = dynamicSession(hs, today, now, 45);
+    const items = res.items.filter(i => i.id !== 'cardio').map(i => ({ ...homeItem(hs, i.id, i.planSets, today), ss: i.ss }));
+    return { date: today, items, reason: 'A casa al posto della palestra · ' + res.reason.split(' · ')[0], home: 'full', forced: true, deload: false, cycle: state.cycle.n,
+      minutes: itemMinutes(items, 5), duration: 45, cur: 0, view: 'list' };
+  }
+  const ctx = windowCtx(state, today);
+  // muscoli della prossima seduta in palestra, se è domani
+  const tomorrow = addDays(today, 1), busy = new Set();
+  if (recommendedDays(state, today).includes(tomorrow)) {
+    let f = null; try { f = forecast(state, tomorrow, null, today); } catch { f = null; }
+    for (const it of f?.items || []) for (const [m, w] of Object.entries(EX[it.id]?.work || {})) if (w >= 1) busy.add(m);
+  }
+  const forearm7 = state.sessions.filter(x => x.date >= addDays(today, -6) && x.date < today)
+    .reduce((a, x) => a + x.items.filter(i => EX[i.id]?.muscle === 'avambracci').reduce((b, i) => b + workSets(i).length, 0), 0);
+  const AESTHETIC = ['laterali', 'tricipiti', 'bicipiti', 'posteriori', 'petto', 'addome', 'polpacci', 'avambracci'];
+  const cand = AESTHETIC.filter(m => !busy.has(m) && hoursSince(state, m, now) >= 36).map(m => {
+    const target = m === 'avambracci' ? 4 : ctx.target[m], done = m === 'avambracci' ? forearm7 : ctx.win7[m];
+    const prio = m === 'avambracci' ? 1 : { alta: 3, normale: 2, minima: 1 }[state.settings.priority[m] || 'normale'];
+    return { m, score: (1 - done / target) * (1 + prio / 3) };
+  }).filter(x => x.score > 0).sort((a, b) => b.score - a.score);
+  // tre esercizi da tre serie, in superserie dove si può (bicipiti + tricipiti, laterali + posteriori)
+  const pick = cand.slice(0, 3).map(x => x.m);
+  const items = pick.map(m => {
+    const pool = Object.entries(HOME_PLAN[m]).sort((a, b) => b[1] - a[1] || lastUse(state, a[0]) - lastUse(state, b[0]));
+    // àncora una volta e complementare la volta dopo, come in palestra
+    const top = pool.filter(([, p]) => p === pool[0][1]).map(([id]) => id);
+    const comp = pool.filter(([, p]) => p === 2).map(([id]) => id);
+    const used = top.some(id => sinceUse(hs, id, m) === 0);
+    const id = used && comp.length ? comp[0] : top[0];
+    return homeItem(hs, id, 3, today);
+  });
+  pairUp(hs, items, today);
+  const names = pick.map(m => MUSCLES[m].name.toLowerCase());
+  const reason = items.length ? `I muscoli più indietro questa settimana: ${names.join(', ').replace(/, ([^,]*)$/, ' e $1')}` : 'Oggi niente da recuperare: riposo';
+  return { date: today, items, reason, home: 'mini', forced: true, deload: false, cycle: state.cycle.n,
+    minutes: itemMinutes(items, 3), duration: 20, cur: 0, view: 'list' };
+}

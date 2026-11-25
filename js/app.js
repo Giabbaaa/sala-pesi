@@ -1,4 +1,4 @@
-import { EX, EXERCISES, MUSCLES, MUSCLE_ORDER, TYPE_RULES, EQUIP_GROUPS, imgs } from './catalog.js';
+import { EX, EXERCISES, MUSCLES, MUSCLE_ORDER, ALL_MUSCLES, TYPE_RULES, EQUIP_GROUPS, imgs } from './catalog.js';
 import * as E from './engine.js';
 import * as G from './sync.js';
 import * as M from './meals.js';
@@ -223,7 +223,8 @@ function musclesHtml(e) {
   const sec = Object.entries(e.work || {}).filter(([, w]) => w < 1).map(([m]) => MUSCLES[m].name.toLowerCase());
   return `<div class="muscles">${prim.map(x => `<span class="lv3">${esc(x)}</span>`).join('')}${sec.map(x => `<span class="lv2">${esc(x)}</span>`).join('')}${(e.also || []).map(x => `<span class="lv1">${esc(x)}</span>`).join('')}</div>`;
 }
-const howHtml = e => ['Posizione', 'Movimento', 'Ritorno', 'Attenzione'].map((t, k) => e.how?.[k] ? `<div><b>${t}</b>${esc(e.how[k])}</div>` : '').join('');
+const howHtml = e => ['Posizione', 'Movimento', 'Ritorno', 'Attenzione'].map((t, k) => e.how?.[k] ? `<div><b>${t}</b>${esc(e.how[k])}</div>` : '').join('')
+  + (e.homeNote ? `<div><b>A casa</b>${esc(e.homeNote.replace(/^A casa: /, ''))}</div>` : '');
 const flipHtml = id => EX[id]?.unknown ? '' : `<div class="flip" data-id="${esc(id)}"><img src="${imgs(id)[0]}" alt="Posizione iniziale"><img class="b" src="${imgs(id)[1]}" alt="Posizione finale"></div>`;
 const exName = it => EX[it.id]?.name || it.name || it.id;
 const visible = e => !e.hidden;
@@ -289,10 +290,17 @@ const isDone = it => it.id === 'cardio' ? logged(it).length > 0 : logged(it).len
 const todaySession = () => state.sessions.find(s => s.date === today());
 // Lo storico senza la giornata in corso: per "ultima volta" e per i carichi consigliati
 const pastState = () => { const d = state.current?.date || today(); return { ...state, sessions: state.sessions.filter(s => s.date !== d) }; };
-const newItem = id => { const sg = E.suggestion(pastState(), id); return { id, planSets: 3, kg: sg.kg, reps: sg.reps, note: sg.note, ss: null, sets: [], skipped: false }; };
+const newItem = id => { if (state.current?.home) return E.homeItem(pastState(), id, 3, today()); const sg = E.suggestion(pastState(), id); return { id, planSets: 3, kg: sg.kg, reps: sg.reps, note: sg.note, ss: null, sets: [], skipped: false }; };
 
+// A casa: come montare il manubrio per quel peso
+function homeLine(c, id, kgv) {
+  if (!c?.home || EX[id].equip !== 'manubri' || kgv == null) return '';
+  const side = E.homeSide(state, id, kgv);
+  if (!side) return `<p class="small muted" style="margin:-2px 0 8px">Con i tuoi manubri non si fa: usa + e −</p>`;
+  return `<p class="small muted" style="margin:-2px 0 8px">${E.homeSingle(id) ? 'Un manubrio' : 'Ogni manubrio'}: ${side.length ? `${side.map(kg).join(' + ')} kg per lato` : 'solo il manico'}</p>`;
+}
 // Una giornata salvata riaperta per continuare o modificare
-const fromSession = (s, date) => ({ date, reason: 'Allenamento di oggi', deload: s.deload, seed: s.seed, free: !!s.free, forced: true, cur: 0, view: 'list', duration: s.duration, want: s.want,
+const fromSession = (s, date) => ({ date, reason: s.home ? 'Allenamento a casa' : 'Allenamento di oggi', deload: s.deload, seed: s.seed, free: !!s.free, home: s.home || null, forced: true, cur: 0, view: 'list', duration: s.duration, want: s.want,
   items: s.items.map(i => {
     if (i.id === 'cardio') return { id: 'cardio', minutes: i.minutes, planSets: 0, ss: null, skipped: !!i.skipped, sets: [...i.sets] };
     const x = newItem(i.id); const l = i.sets[i.sets.length - 1];
@@ -366,7 +374,8 @@ function dayBody(t, day, c) {
     const nx = E.nextLabel(state, t);
     html += `<section class="card"><h3>Oggi riposo</h3>
       <p class="muted">${nx && nx !== 'oggi' ? `Prossimo allenamento ${esc(nx)}. ` : ''}Il recupero fa crescere il muscolo quanto l’allenamento.</p>
-      <button style="margin-top:10px" data-act="force">Allenati comunque</button>
+      <p class="small muted" style="margin-top:12px">Allenamento a casa, con manubri e tappetino:</p>
+      <div class="row" style="gap:8px;margin-top:6px;flex-wrap:wrap"><button data-act="home-start" data-v="mini">Mini · 20′</button><button data-act="home-start" data-v="full">Completo · 45′</button><button class="ghost" data-act="force">In palestra</button></div>
       <p class="small muted" style="margin-top:14px">Hai fatto un esercizio fuori programma, anche a casa?</p>
       <select data-in="free-add" style="margin-top:6px">${addOptions('+ Segna un esercizio')}</select></section>`;
     return html + nutriCard(t);
@@ -508,8 +517,11 @@ function backupReminder() {
     <div class="row" style="margin-top:8px"><button class="primary" data-act="export">Salva copia</button><button class="ghost" data-act="backup-later">Più tardi</button></div></section>`;
 }
 
-function addOptions(first) {
-  return `<option value="">${first}</option>` + MUSCLE_ORDER.map(m => `<optgroup label="${MUSCLES[m].name}">${EXERCISES.filter(e => e.muscle === m && visible(e)).map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('')}</optgroup>`).join('');
+function addOptions(first, home = false) {
+  return `<option value="">${first}</option>` + ALL_MUSCLES.map(m => {
+    const list = EXERCISES.filter(e => e.muscle === m && (home ? e.home : visible(e)));
+    return list.length ? `<optgroup label="${MUSCLES[m].name}">${list.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('')}</optgroup>` : '';
+  }).join('');
 }
 
 // Riepilogo della giornata: "Fatto!" se è tutto fatto, altrimenti "Fatto in parte"
@@ -586,14 +598,14 @@ function overview(c) {
   const dur = c.duration || E.usualMinutes(state);
   return `<section class="card" data-lp="plan">
     ${isToday ? '' : `<div class="row between" style="margin-bottom:6px"><span class="small muted">Stai modificando un giorno passato</span><button class="ghost" data-act="past-close">Fine</button></div>`}
-    <h3 class="t-warn">${!isToday ? `Allenamento di ${dayLabel(c.date).toLowerCase()}` : c.free ? 'Esercizi di oggi' : 'Seduta di oggi'}${c.deload ? ' · scarico' : ''}</h3>
+    <h3 class="t-warn">${!isToday ? `Allenamento di ${dayLabel(c.date).toLowerCase()}` : c.home === 'mini' ? 'Mini a casa' : c.home ? 'Seduta a casa' : c.free ? 'Esercizi di oggi' : 'Seduta di oggi'}${c.deload ? ' · scarico' : ''}</h3>
     ${c.free || !isToday ? '' : `<p class="reason">${esc(c.reason)}</p>`}
-    ${logs || !isToday ? '' : `${c.free ? '' : `<div class="row between durrow"><span class="small muted">Tempo oggi</span><span class="seg">${E.DURATIONS.map(v => `<button class="${dur === v ? 'on' : ''}" data-act="today-dur" data-v="${v}">${v}′</button>`).join('')}</span></div>`}
+    ${logs || !isToday ? '' : `${c.free || c.home ? '' : `<div class="row between durrow"><span class="small muted">Tempo oggi</span><span class="seg">${E.DURATIONS.map(v => `<button class="${dur === v ? 'on' : ''}" data-act="today-dur" data-v="${v}">${v}′</button>`).join('')}</span></div>`}
     <div class="summary"><span><b>${c.minutes}</b> min</span><span><b>${work.length}</b> esercizi</span><span><b>${all}</b> serie</span><span><b>${kc[0]}–${kc[1]}</b> kcal</span></div>
-    <p class="small muted">Prima ${E.warmMin(dur)} min di cardio leggero.</p>`}
+    <p class="small muted">${c.home ? 'Prima 3 minuti di riscaldamento: braccia e spalle in movimento, poi una serie leggera.' : `Prima ${E.warmMin(dur)} min di cardio leggero.`}</p>`}
     ${nextG >= 0 ? `<button class="primary big go" data-act="open" data-g="${nextG}">${logs ? `Continua · ${esc(nextName)}` : 'Inizia'}</button>` : ''}
     <div class="rows">${rows}</div>
-    <select data-in="ov-add" style="margin-top:12px">${addOptions('+ Aggiungi esercizio')}</select>
+    <select data-in="ov-add" style="margin-top:12px">${addOptions('+ Aggiungi esercizio', !!c.home)}</select>
   </section>
   ${!isToday ? '' : c.free ? `<div class="row" style="justify-content:center;margin-top:6px"><button class="ghost" data-act="full">Aggiungi la seduta completa di oggi</button></div>`
     : logs ? (nextG >= 0 ? frettaBtn() : '') : `<div class="row" style="justify-content:center;margin-top:6px"><button class="ghost" data-act="recompose">Ricomponi la seduta</button></div>`}`;
@@ -644,7 +656,7 @@ function viewSession() {
 
   const sm = g.items.length > 1;
   const usedIds = new Set(c.items.map(x => x.id));
-  const pairNext = sm && g.items.length === 2 && g.items.every(x => !logged(x).length) ? E.nextSetupPair(state, g.items[0].id, g.items[1].id, usedIds) : null;
+  const pairNext = !c.home && sm && g.items.length === 2 && g.items.every(x => !logged(x).length) ? E.nextSetupPair(state, g.items[0].id, g.items[1].id, usedIds) : null;
   html += `<section class="card">${sm ? `<span class="tag">Superserie: alterna i due esercizi, recupero dopo la coppia</span>
     ${pairNext ? `<div class="ctrls" style="margin:2px 0 14px"><button data-act="swap-pair" data-g="${c.cur}">Cambia attrezzo a tutti e due</button></div>` : ''}` : ''}`;
   // turno nella superserie: l'esercizio con meno serie fatte
@@ -657,7 +669,7 @@ function viewSession() {
       continue;
     }
     const e = EX[it.id]; const st = E.exSettings(state, it.id);
-    const last = E.suggestion(pastState(), it.id).last;
+    const last = E.suggestion(pastState(), it.id, c.date, !!c.home).last;
     const open = infoOpen(it.id);
     html += `<div class="${ui.swapped === idx ? 'pop' : ''}" style="${sm && it !== g.items[0] ? 'margin-top:18px;padding-top:16px;border-top:2px solid var(--line)' : ''}">
       <div class="row between" style="align-items:flex-start"><h3>${esc(e.name)}${isDone(it) ? ` <span class="check ${ui.flashCheck === idx ? 'pop' : ''}">✓</span>` : ''}</h3><span class="muted small" style="white-space:nowrap;margin-top:4px">${it.planSets} × ${rangeLabel(it.id)}</span></div>
@@ -699,6 +711,7 @@ function viewSession() {
             <div class="stepper"><button data-act="reps" data-d="-1" aria-label="Meno">−</button><b><span class="num ${bump('reps')}">${d.reps}</span><small>${e.type === 'time' ? 'secondi' : 'ripetizioni'}</small></b><button data-act="reps" data-d="1" aria-label="Più">+</button></div>
           </div>
           ${plates ? `<p class="small muted" style="margin:-2px 0 8px">Per lato: ${plates.plates.length ? plates.plates.map(kg).join(' + ') : 'nessun disco'}${plates.rest > 0 ? ` (mancano ${kg(plates.rest)} kg per lato con i tuoi dischi)` : ''}</p>` : ''}
+          ${homeLine(c, it.id, d.kg)}
           <div class="effort">${EFFS.map(([k, label, hint, elv]) => `<button class="${elv} ${editing && s?.eff === k ? 'on' : ''}" data-act="log" data-eff="${k}">${label}<small>${hint}</small></button>`).join('')}</div>
           ${editing ? `<div class="row" style="justify-content:center;margin-top:6px"><button class="ghost" data-act="edit-cancel">Annulla modifica</button></div>` : ''}</div>`;
       } else {
@@ -731,13 +744,14 @@ const frettaBtn = () => `<div class="row" style="justify-content:center;margin-t
 // "Cambia esercizio" (un altro con lo stesso attrezzo; in superserie, alla stessa postazione del compagno)
 function swapButtons(c, g, it, idx, used) {
   if (logged(it).length) return '';
+  if (c.home) return E.nextHome(it.id, used) ? `<button data-act="swap-ex" data-i="${idx}">Cambia esercizio</button>` : '';
   const partner = g.items.length > 1 ? g.items.find(x => x !== it) : null;
   const sameNext = E.nextSameSetup(state, it.id, used, partner?.id);
   const setupNext = partner ? null : E.nextSetup(state, it.id, used);
   return `${setupNext ? `<button data-act="swap-setup" data-i="${idx}">Cambia attrezzo</button>` : ''}${sameNext ? `<button data-act="swap-ex" data-i="${idx}">Cambia esercizio</button>` : ''}`;
 }
 function replaceEx(it, nid) {
-  const sg = E.suggestion(pastState(), nid);
+  const sg = state.current?.home ? E.homeItem(pastState(), nid, it.planSets, today()) : E.suggestion(pastState(), nid);
   Object.assign(it, { id: nid, kg: sg.kg, reps: sg.reps, note: sg.note, sets: [] }); delete it.adjKg; delete it.orig;
   ui.draft = null; ui.editSet = null; ui.swapped = state.current.items.indexOf(it);
 }
@@ -1035,7 +1049,7 @@ function viewImpostazioni() {
         <button class="ghost" data-act="snap" data-k="${x.k}">${ui.confirmSnap === x.k ? 'Conferma' : 'Ripristina'}</button></div>`; }).join('')}` : ''}
     <button class="danger" style="margin-top:14px" data-act="reset">${ui.confirmReset ? 'Tocca di nuovo per cancellare tutto' : 'Cancella tutti i dati'}</button>
   </section>
-  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.16.1 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.17 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
 }
 
 // ---------- Render ----------
@@ -1206,7 +1220,8 @@ function stepDraft(a, d) {
   const c = state.current; if (!c || !ui.draft) return;
   const it = c.items[ui.draft.i];
   ui.bump = { a, d };
-  if (a === 'kg') ui.draft.kg = isLb(it.id) ? E.stepLoad(state, it.id, ui.draft.kg, d) : Math.max(0, Math.round(((ui.draft.kg ?? 0) + d) * 100) / 100);
+  if (a === 'kg') ui.draft.kg = c.home && EX[it.id].equip === 'manubri' ? E.homeStep(state, it.id, ui.draft.kg, d)
+    : isLb(it.id) ? E.stepLoad(state, it.id, ui.draft.kg, d) : Math.max(0, Math.round(((ui.draft.kg ?? 0) + d) * 100) / 100);
   else ui.draft.reps = Math.max(1, ui.draft.reps + d * (EX[it.id].type === 'time' ? 5 : 1));
   render();
 }
@@ -1240,6 +1255,11 @@ document.addEventListener('click', ev => {
     case 'intro-ok': state.seenIntro = true; return rerender();
     case 'cycle-ok': state.cycleBanner = null; return rerender();
     case 'notice-ok': state.notice = null; return rerender();
+    case 'home-start': {
+      const h = E.composeHome(state, today(), Date.now(), el.dataset.v);
+      if (!h.items.length) { toast('Oggi non c’è niente da recuperare: riposo'); return; }
+      state.current = h; state.current.minutes = E.planMinutes(state, h); save(); toTop(); return render();
+    }
     case 'force': delete state.skipDay; state.current = E.compose(state, today()); state.current.forced = true; save(); return render();
     case 'lp-info': ui.sheet = el.dataset.id; return renderSheet();
     case 'plan-del': {   // dalla pressione lunga su "Seduta di oggi": via le serie segnate (se ci sono) e la seduta
@@ -1249,7 +1269,8 @@ document.addEventListener('click', ev => {
       else { if (c && !c.forced && !hasLogs(c)) state.skipDay = today(); state.current = null; }
       state.rest = null; save(); toast('Seduta eliminata'); return render();
     }
-    case 'recompose': { if (hasLogs(c)) return; const f = c?.forced; state.current = E.compose(state, today(), Date.now(), c?.duration); state.current.forced = f; toast('Seduta ricomposta'); save(); return render(); }
+    case 'recompose': { if (hasLogs(c)) return; if (c?.home) { state.current = E.composeHome(state, today(), Date.now(), c.home); toast('Seduta ricomposta'); save(); return render(); }
+      const f = c?.forced; state.current = E.compose(state, today(), Date.now(), c?.duration); state.current.forced = f; toast('Seduta ricomposta'); save(); return render(); }
     case 'today-dur': {
       if (!c || hasLogs(c)) return;
       const v = +el.dataset.v, f = c.forced; ui.dur = { date: today(), min: v };
@@ -1314,7 +1335,7 @@ document.addEventListener('click', ev => {
       const it = c.items[i]; if (!it || logged(it).length) return;
       const used = new Set(c.items.map(x => x.id));
       const partner = it.ss ? c.items.find(x => x !== it && x.ss === it.ss) : null;
-      const nid = a === 'swap-ex' ? E.nextSameSetup(state, it.id, used, partner?.id) : E.nextSetup(state, it.id, used);
+      const nid = c.home ? E.nextHome(it.id, used) : a === 'swap-ex' ? E.nextSameSetup(state, it.id, used, partner?.id) : E.nextSetup(state, it.id, used);
       if (!nid) return;
       replaceEx(it, nid); return rerender();
     }
@@ -1473,7 +1494,8 @@ function lpMenu(el) {
   } else if (k === 'plan') {
     if (!c) return false;
     const isToday = c.date === today();
-    title = isToday ? 'Seduta di oggi' : `Allenamento di ${dayLabel(c.date).toLowerCase()}`;
+    title = isToday ? (c.home ? 'Allenamento a casa' : 'Seduta di oggi') : `Allenamento di ${dayLabel(c.date).toLowerCase()}`;
+    if (isToday && !hasLogs(c) && !c.home && !c.free) items.push({ act: 'home-start', label: 'Falla a casa, con i manubri', attrs: 'data-v="full"' });
     if (isToday && !hasLogs(c) && !c.free) items.push({ act: 'recompose', label: 'Ricomponi la seduta' });
     items.push({ act: 'plan-del', label: hasLogs(c) ? 'Elimina la seduta e le serie segnate' : 'Elimina la seduta', danger: true });
   }

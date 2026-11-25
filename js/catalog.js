@@ -14,9 +14,12 @@ export const MUSCLES = {
   femorali:    { name: 'Femorali' },
   glutei:      { name: 'Glutei' },
   polpacci:    { name: 'Polpacci' },
+  // extra: si allena solo a casa, fuori dagli obiettivi settimanali e dal Piano
+  avambracci:  { name: 'Avambracci', extra: true },
 };
 
-export const MUSCLE_ORDER = Object.keys(MUSCLES);
+export const MUSCLE_ORDER = Object.keys(MUSCLES).filter(m => !MUSCLES[m].extra);
+export const ALL_MUSCLES = Object.keys(MUSCLES);
 
 const E = (id, name, muscle, type, work, sub, equip, how, extra = {}) =>
   ({ id, name, muscle, type, work, sub, equip, how, cues: how, ...extra });
@@ -515,9 +518,71 @@ export const EXERCISES = [
     'Spingi le braccia in avanti e resisti al cavo che vuole farti ruotare.',
     'Tieni la posizione, poi torna al petto. Cambia lato a metà tempo.',
     'Busto e anche fermi, rivolti in avanti.'], { base: true }),
+
+  // ---------- A casa (manubri, tappetino, sedia) ----------
+  E('Dumbbell_Floor_Press', 'Floor press manubri', 'petto', 'multi', { petto: 1, tricipiti: 0.5 }, 'Dumbbell_Bench_Press', 'manubri', [
+    'Sdraiato sul tappetino, ginocchia piegate, manubri sopra il petto con i palmi verso i piedi.',
+    'Scendi lento finché i gomiti, a circa 45° dal busto, toccano appena il pavimento.',
+    'Pausa di un attimo e spingi verso l’alto espirando, avvicinando i manubri.',
+    'Il pavimento ferma i gomiti: è una panca piana più gentile con le spalle.'], { home: true, also: ['deltoide anteriore'] }),
+  E('Push-Ups_With_Feet_Elevated', 'Piegamenti con i piedi sulla sedia', 'petto', 'bw', { petto: 1, tricipiti: 0.5 }, 'Pushups', 'corpo', [
+    'Mani a terra poco più larghe delle spalle, punte dei piedi sul sedile di una sedia contro il muro. Corpo dritto.',
+    'Scendi piegando i gomiti a 45° fino a sfiorare il pavimento con il petto.',
+    'Spingi via il pavimento espirando, fino a braccia distese.',
+    'Con i piedi in alto lavora di più il petto alto. Se è troppo dura, piedi su un rialzo più basso.'], { home: true, also: ['deltoide anteriore'] }),
+  E('Push-Ups_-_Close_Triceps_Position', 'Piegamenti stretti', 'tricipiti', 'bw', { tricipiti: 1, petto: 0.5 }, 'Pushups', 'corpo', [
+    'Mani a terra sotto le spalle, più strette del solito. Corpo dritto, addome contratto.',
+    'Scendi tenendo i gomiti vicino ai fianchi.',
+    'Spingi espirando fino a braccia distese.',
+    'Se è troppo dura, ginocchia a terra.'], { home: true }),
+  E('Reverse_Crunch', 'Crunch inverso', 'addome', 'bw', { addome: 1 }, 'Crunches', 'corpo', [
+    'Sdraiato sul tappetino, braccia lungo i fianchi, ginocchia piegate sopra le anche.',
+    'Porta le ginocchia verso il petto staccando il bacino da terra, espirando.',
+    'Scendi lento senza appoggiare i piedi.',
+    'Muovi il bacino, non dare slancio con le gambe.'], { home: true }),
+  E('Seated_Dumbbell_Palms-Up_Wrist_Curl', 'Flessioni del polso', 'avambracci', 'iso', { avambracci: 1 }, 'Seated_Dumbbell_Palms-Down_Wrist_Curl', 'manubri', [
+    'Seduto sulla sedia, avambracci appoggiati sulle cosce, polsi appena oltre le ginocchia, palmi verso l’alto.',
+    'Lascia scendere il manubrio piegando il polso, anche facendolo rotolare un po’ verso le dita.',
+    'Richiudi il polso verso l’alto stringendo.',
+    'Si muove solo il polso. Ripetizioni alte, 15–25.'], { home: true, also: ['presa'] }),
+  E('Seated_Dumbbell_Palms-Down_Wrist_Curl', 'Estensioni del polso', 'avambracci', 'iso', { avambracci: 1 }, 'Seated_Dumbbell_Palms-Up_Wrist_Curl', 'manubri', [
+    'Seduto sulla sedia, avambracci sulle cosce, palmi verso il basso, polsi oltre le ginocchia.',
+    'Solleva il dorso della mano verso l’alto.',
+    'Scendi lento.',
+    'Carico più leggero delle flessioni: gli estensori sono più deboli.'], { home: true }),
 ];
 
+// Note per farli a casa (con la sedia al posto della panca)
+const HOME_NOTES = {
+  'One-Arm_Dumbbell_Row': 'A casa: mano e ginocchio sul sedile di una sedia stabile.',
+  Tricep_Dumbbell_Kickback: 'A casa: mano sul sedile di una sedia, busto inclinato.',
+  Dumbbell_Shoulder_Press: 'A casa: seduto su una sedia, schiena appoggiata.',
+  Concentration_Curls: 'A casa: seduto sul bordo della sedia.',
+  Standing_Dumbbell_Calf_Raise: 'A casa: una gamba alla volta, avampiede su un gradino o un libro spesso, una mano al muro.',
+  Goblet_Squat: 'A casa: scendi solo fin dove il ginocchio destro sta bene.',
+  Reverse_Flyes: 'A casa: in piedi con il busto inclinato, o seduto sul bordo della sedia con il petto sulle cosce.',
+  Standing_Dumbbell_Triceps_Extension: 'A casa: seduto sulla sedia, schiena dritta.',
+};
+
 export const EX = Object.fromEntries(EXERCISES.map(e => [e.id, e]));
+for (const [id, n] of Object.entries(HOME_NOTES)) EX[id].homeNote = n;
+
+// Esercizi per l'allenamento a casa e loro priorità (3 sempre, 2 a rotazione, 1 ogni tanto)
+export const HOME_PLAN = {
+  petto:       { Dumbbell_Floor_Press: 3, 'Push-Ups_With_Feet_Elevated': 3, Pushups: 1 },
+  laterali:    { Side_Lateral_Raise: 3, 'One-Arm_Side_Laterals': 2, Dumbbell_Shoulder_Press: 1 },
+  bicipiti:    { Hammer_Curls: 3, Dumbbell_Bicep_Curl: 2, Concentration_Curls: 2 },
+  tricipiti:   { Standing_Dumbbell_Triceps_Extension: 3, Tricep_Dumbbell_Kickback: 2, 'Push-Ups_-_Close_Triceps_Position': 1 },
+  schiena:     { 'One-Arm_Dumbbell_Row': 3 },
+  posteriori:  { Reverse_Flyes: 3 },
+  addome:      { Crunches: 3, Reverse_Crunch: 2, Dead_Bug: 2, Plank: 1 },
+  quadricipiti:{ Goblet_Squat: 3 },
+  femorali:    { 'Stiff-Legged_Dumbbell_Deadlift': 3 },
+  glutei:      { Butt_Lift_Bridge: 3 },
+  polpacci:    { Standing_Dumbbell_Calf_Raise: 3 },
+  avambracci:  { 'Seated_Dumbbell_Palms-Up_Wrist_Curl': 3, 'Seated_Dumbbell_Palms-Down_Wrist_Curl': 3 },
+};
+for (const m of Object.keys(HOME_PLAN)) for (const id of Object.keys(HOME_PLAN[m])) EX[id].home = true;
 
 // Macchine che fanno più esercizi sulla stessa postazione (utile per le superserie)
 const STATIONS = { Butterfly: 'pecdeck', Reverse_Machine_Flyes: 'pecdeck', Leg_Press: 'legpress', Calf_Press_On_The_Leg_Press_Machine: 'legpress' };

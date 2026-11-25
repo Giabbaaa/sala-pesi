@@ -1,5 +1,5 @@
 // Service worker: tutto in cache per funzionare offline in palestra.
-const VERSION = 'v1.16.1';
+const VERSION = 'v1.17';
 const ASSETS = [
 "./",
 "index.html",
@@ -200,6 +200,18 @@ const ASSETS = [
 "img/ex/Upright_Cable_Row_1.jpg",
 "img/ex/Wide-Grip_Lat_Pulldown_0.jpg",
 "img/ex/Wide-Grip_Lat_Pulldown_1.jpg",
+"img/ex/Dumbbell_Floor_Press_0.jpg",
+"img/ex/Dumbbell_Floor_Press_1.jpg",
+"img/ex/Push-Ups_With_Feet_Elevated_0.jpg",
+"img/ex/Push-Ups_With_Feet_Elevated_1.jpg",
+"img/ex/Push-Ups_-_Close_Triceps_Position_0.jpg",
+"img/ex/Push-Ups_-_Close_Triceps_Position_1.jpg",
+"img/ex/Reverse_Crunch_0.jpg",
+"img/ex/Reverse_Crunch_1.jpg",
+"img/ex/Seated_Dumbbell_Palms-Up_Wrist_Curl_0.jpg",
+"img/ex/Seated_Dumbbell_Palms-Up_Wrist_Curl_1.jpg",
+"img/ex/Seated_Dumbbell_Palms-Down_Wrist_Curl_0.jpg",
+"img/ex/Seated_Dumbbell_Palms-Down_Wrist_Curl_1.jpg",
 ];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(ASSETS.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
