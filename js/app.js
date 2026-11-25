@@ -150,7 +150,7 @@ async function keepAwake(on) {
     if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
   } catch { wakeLock = null; }
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden) loadMensa(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { loadMensa(); loadInbox(); } });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && state.current?.view === 'ex') keepAwake(true); tickTimer(); ghBackup({ every: document.hidden ? 3 : 10 }); });
 
 // ---------- Timer di recupero ----------
@@ -1073,7 +1073,7 @@ function viewImpostazioni() {
         <button class="ghost" data-act="snap" data-k="${x.k}">${ui.confirmSnap === x.k ? 'Conferma' : 'Ripristina'}</button></div>`; }).join('')}` : ''}
     <button class="danger" style="margin-top:14px" data-act="reset">${ui.confirmReset ? 'Tocca di nuovo per cancellare tutto' : 'Cancella tutti i dati'}</button>
   </section>
-  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.19 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.20 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
 }
 
 // I manubri di casa: peso del manico e dischi (servono per i pesi delle sedute a casa)
@@ -1649,6 +1649,46 @@ for (const type of ['touchend', 'touchcancel']) document.addEventListener(type, 
   if (!reduced()) s.body.animate?.([{ transform: from, opacity: op }, { transform: 'none', opacity: 1 }], { duration: 380, easing: 'cubic-bezier(.34, 1.25, .64, 1)' });
 }, { passive: true });
 
+// ---------- Serie mandate dalla chat ----------
+// inbox.json (nel repository, servito con l'app) contiene serie dette a voce in chat e segnate da Claude.
+// L'app le aggiunge una volta sola (state.meta.inbox tiene gli id fatti), solo se recenti, con una copia prima,
+// e senza doppioni se le stesse serie ci sono già. Le serie aggiunte non cancellano niente.
+let inboxAt = 0;
+async function loadInbox() {
+  if (Date.now() - inboxAt < 10 * 60000) return;
+  inboxAt = Date.now();
+  let data;
+  try { const r = await fetch('inbox.json', { cache: 'no-store' }); if (!r.ok) return; data = await r.json(); } catch { return; }
+  const done = state.meta.inbox = state.meta.inbox || [], t = today(), added = [];
+  for (const x of data?.items || []) {
+    if (!x?.id || done.includes(x.id) || !x.date || x.date > t || x.date < E.addDays(t, -30)) continue;
+    if (!(x.add || []).every(a => EX[a.ex] && Array.isArray(a.sets))) continue;   // esercizio non ancora nell'app: riprova dopo l'aggiornamento
+    if (!added.length) snapshot(JSON.stringify(state), 'prima di aggiungere le serie dalla chat');
+    applyInbox(x); done.push(x.id);
+    added.push(...x.add.map(a => `${EX[a.ex].name} (${dayLabel(x.date).toLowerCase()})`));
+  }
+  if (!added.length) return;
+  save(); render(); ghBackup();
+  toast(`Aggiunto dalla chat: ${added.join(', ')}`);
+}
+function applyInbox(x) {
+  // la giornata: quella aperta (oggi o un giorno passato in modifica), altrimenti quella salvata, altrimenti nuova
+  const open = [state.current, state.stash].find(c => c?.date === x.date);
+  const saved = state.sessions.find(s => s.date === x.date);
+  const cur = open || (saved ? fromSession(saved, x.date) : { date: x.date, items: [], reason: '', free: false, forced: true, deload: false, seed: null, cur: 0, view: 'list' });
+  const times = cur.items.flatMap(i => (i.sets || []).map(z => z?.t)).filter(Boolean);
+  let at = times.length ? Math.max(...times) + 3 * 60000 : E.parseDay(x.date).getTime() + 18 * 36e5;
+  for (const a of x.add) {
+    const same = cur.items.find(i => i.id === a.ex && logged(i).length >= a.sets.length && a.sets.every((z, k) => logged(i)[k]?.kg === z.kg && logged(i)[k]?.reps === z.reps));
+    if (same) continue;   // già segnate
+    const sets = a.sets.map(z => ({ kg: z.kg, reps: z.reps, eff: z.eff || 'giusto', t: (at += 150000) }));
+    cur.items.push({ ...newItem(a.ex, false), planSets: sets.length, sets, skipped: false, added: true, learned: true });
+    if (x.date >= E.addDays(today(), -7)) E.learnChoice(state, { chosen: a.ex, today: x.date });   // scelta tua: conta per le priorità
+  }
+  if (open) { open.minutes = E.planMinutes(state, open); E.recordDay(state, open); }
+  else E.recordDay(state, cur);
+}
+
 // ---------- Avvio ----------
 {
   const c = state.current;
@@ -1665,6 +1705,7 @@ for (const type of ['touchend', 'touchcancel']) document.addEventListener(type, 
 if (state.current?.view === 'ex') keepAwake(true);
 render();
 loadMensa();
+loadInbox();
 setTimeout(() => ghBackup(), 2000);
 // Aggiorna la vista al cambio di giorno o al ritorno nell'app
 let lastDay = today();

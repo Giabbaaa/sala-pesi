@@ -1,5 +1,5 @@
 // Service worker: tutto in cache per funzionare offline in palestra.
-const VERSION = 'v1.19';
+const VERSION = 'v1.20';
 const ASSETS = [
 "./",
 "index.html",
@@ -120,6 +120,8 @@ const ASSETS = [
 "img/ex/Lying_Leg_Curls_1.jpg",
 "img/ex/Machine_Bench_Press_0.jpg",
 "img/ex/Machine_Bench_Press_1.jpg",
+"img/ex/Machine_Lateral_Raise_0.jpg",
+"img/ex/Machine_Lateral_Raise_1.jpg",
 "img/ex/Machine_Bicep_Curl_0.jpg",
 "img/ex/Machine_Bicep_Curl_1.jpg",
 "img/ex/Machine_Preacher_Curls_0.jpg",
@@ -224,6 +226,7 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (url.origin !== location.origin) return;
   if (url.pathname.endsWith('/mensa.json')) return;          // il menu della mensa sempre dalla rete (l'app ne tiene una copia)
+  if (url.pathname.endsWith('/inbox.json')) return;          // serie mandate dalla chat: sempre dalla rete
   // Subito dalla cache (veloce anche senza rete), e intanto aggiorna in background
   e.respondWith(caches.open(VERSION).then(async c => {
     const hit = await c.match(e.request, { ignoreSearch: true });

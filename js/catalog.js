@@ -187,6 +187,12 @@ export const EXERCISES = [
     'Sali di lato fino all’altezza della spalla guidando con il gomito, gomito appena piegato.',
     'Scendi lento: il cavo tiene il muscolo in tensione anche in basso.',
     'Busto fermo, spalla bassa (non alzarla verso l’orecchio). Prima un braccio, poi l’altro.'], { base: true }),
+  // macchina della palestra di Giabba ("Lateral raise", foto del 25/11): le immagini sono dell'alzata seduta con i manubri, stesso movimento
+  E('Machine_Lateral_Raise', 'Alzate laterali alla macchina', 'laterali', 'iso', { laterali: 1 }, 'Cable_Seated_Lateral_Raise', 'macchina', [
+    'Seduto con la schiena dritta e le spalle contro lo schienale; sedile alto quanto basta perché le spalle siano all’altezza dei perni.',
+    'Avambracci contro i cuscinetti, maniglie tenute senza stringere: sali spingendo con i gomiti fino all’altezza delle spalle.',
+    'Scendi lento, senza far toccare i pesi.',
+    'Spingi con i gomiti, non con le mani; spalle basse, lontane dalle orecchie.'] ),
   E('Side_Lateral_Raise', 'Alzate laterali manubri', 'laterali', 'iso', { laterali: 1 }, 'Cable_Seated_Lateral_Raise', 'manubri', [
     'In piedi, manubri ai fianchi, busto appena inclinato in avanti, gomiti morbidi.',
     'Sali di lato fino all’altezza delle spalle, con il mignolo appena più alto del pollice.',

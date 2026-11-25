@@ -1,0 +1,16 @@
+{
+  "about": "Serie dette in chat e segnate da Claude: l'app le aggiunge una volta sola (vedi loadInbox in js/app.js).",
+  "items": [
+    {
+      "id": "2026-11-25-alzate-macchina",
+      "date": "2026-11-25",
+      "add": [
+        { "ex": "Machine_Lateral_Raise", "sets": [
+          { "kg": 32, "reps": 10, "eff": "giusto" },
+          { "kg": 36, "reps": 10, "eff": "limite" },
+          { "kg": 36, "reps": 8, "eff": "limite" }
+        ] }
+      ]
+    }
+  ]
+}
