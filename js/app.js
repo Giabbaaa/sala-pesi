@@ -300,7 +300,7 @@ function homeLine(c, id, kgv) {
   return `<p class="small muted" style="margin:-2px 0 8px">${E.homeSingle(id) ? 'Un manubrio' : 'Ogni manubrio'}: ${side.length ? `${side.map(kg).join(' + ')} kg per lato` : 'solo il manico'}</p>`;
 }
 // Una giornata salvata riaperta per continuare o modificare
-const fromSession = (s, date) => ({ date, reason: s.home ? 'Allenamento a casa' : 'Allenamento di oggi', deload: s.deload, seed: s.seed, free: !!s.free, home: s.home || null, forced: true, cur: 0, view: 'list', duration: s.duration, want: s.want,
+const fromSession = (s, date) => ({ date, reason: s.home ? 'Allenamento a casa' : 'Allenamento di oggi', deload: s.deload, seed: s.seed, kind: s.kind || null, free: !!s.free, home: s.home || null, forced: true, cur: 0, view: 'list', duration: s.duration, want: s.want,
   items: s.items.map(i => {
     if (i.id === 'cardio') return { id: 'cardio', minutes: i.minutes, planSets: 0, ss: null, skipped: !!i.skipped, sets: [...i.sets] };
     const x = newItem(i.id, !!s.home); const l = i.sets[i.sets.length - 1];
@@ -376,6 +376,7 @@ function dayBody(t, day, c) {
       <p class="muted">${nx && nx !== 'oggi' ? `Prossimo allenamento ${esc(nx)}. ` : ''}Il recupero fa crescere il muscolo quanto l’allenamento.</p>
       <p class="small muted" style="margin-top:12px">Allenamento a casa, con manubri e tappetino:</p>
       <div class="row" style="gap:8px;margin-top:6px;flex-wrap:wrap"><button data-act="home-start" data-v="mini">Mini · 20′</button><button data-act="home-start" data-v="full">Completo · 45′</button><button class="ghost" data-act="force">In palestra</button></div>
+      ${(() => { const p = E.planDay(state, t); return `<p class="small muted" style="margin-top:6px">In palestra oggi: ${esc(E.planTitle(p).toLowerCase())}${p.kind === 'focus' ? ', poi cardio' : ''}.</p>`; })()}
       <p class="small muted" style="margin-top:14px">Hai fatto un esercizio fuori programma, anche a casa?</p>
       <select data-in="free-add" style="margin-top:6px">${addOptions('+ Segna un esercizio')}</select></section>`;
     return html + nutriCard(t);
@@ -412,7 +413,7 @@ function futureDay(k) {
   const t = today();
   const plan = state.current?.date === t && !hasLogs(state.current) ? state.current : null;
   let f = null; try { f = E.forecast(state, k, plan, t); } catch { f = null; }
-  if (!f) return `<section class="card"><h3>Riposo</h3><p class="muted">${(state.settings.days || []).length ? 'Non è tra i giorni in cui pensi di andare (li scegli in Piano → Ritmo).' : 'Non è tra i giorni consigliati.'}</p></section>` + nutriCard(k);
+  if (!f) return `<section class="card"><h3>Riposo</h3><p class="muted">Non è tra i giorni consigliati. Il calendario si ricalcola dopo ogni allenamento.</p></section>` + nutriCard(k);
   const work = f.items.filter(i => i.id !== 'cardio');
   return `<section class="card"><h3 class="t-bad">Allenamento previsto${f.deload ? ' · scarico' : ''}</h3>
     <p class="reason">${esc(f.reason)}</p>
@@ -874,11 +875,11 @@ function viewPiano() {
   </section>
 
   <h2>Ritmo</h2><section class="card stack">
-    <p class="small muted">Giorni in cui pensi di andare</p>
+    <div class="row between"><span>Sedute ogni 7 giorni</span><span class="seg">${[2, 3, 4].map(n => `<button class="${E.freqOf(state) === n ? 'on' : ''}" data-act="freq" data-v="${n}">${n}</button>`).join('')}</span></div>
+    <p class="small muted">Una in più se sei indietro, mai tre giorni di fila. Il calendario si ricalcola dopo ogni allenamento.</p>
+    <p class="small muted">Giorni preferiti</p>
     <div class="chips week">${[1, 2, 3, 4, 5, 6, 0].map(d => `<button class="${s.days.includes(d) ? 'on' : ''}" data-act="pday" data-v="${d}">${E.DAY_NAMES[d].slice(0, 3)}</button>`).join('')}</div>
-    ${s.days.length ? `<p class="small muted">${s.days.length} ${s.days.length === 1 ? 'giorno' : 'giorni'} a settimana. Se ne salti uno, la seduta dopo recupera quello che manca.</p>`
-      : `<div class="row between"><span>Sedute ogni 7 giorni</span><span class="seg">${[2, 3, 4].map(n => `<button class="${s.freq === n ? 'on' : ''}" data-act="freq" data-v="${n}">${n}</button>`).join('')}</span></div>
-    <p class="small muted">Nessun giorno scelto: i giorni li propone l’app.</p>`}
+    <p class="small muted">${s.days.length ? 'A parità l’app sceglie questi giorni. Due giorni di fila diventano spinta e tirata.' : 'Nessuno: i giorni li propone l’app.'}</p>
   </section>
 
   <h2>Priorità ed esercizi</h2><section class="card">
@@ -1073,7 +1074,7 @@ function viewImpostazioni() {
         <button class="ghost" data-act="snap" data-k="${x.k}">${ui.confirmSnap === x.k ? 'Conferma' : 'Ripristina'}</button></div>`; }).join('')}` : ''}
     <button class="danger" style="margin-top:14px" data-act="reset">${ui.confirmReset ? 'Tocca di nuovo per cancellare tutto' : 'Cancella tutti i dati'}</button>
   </section>
-  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.20 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.21 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
 }
 
 // I manubri di casa: peso del manico e dischi (servono per i pesi delle sedute a casa)
@@ -1389,7 +1390,7 @@ document.addEventListener('click', ev => {
     case 'list': return showList();
     case 'ov-sets': c.items[i].planSets = Math.max(1, logged(c.items[i]).length, Math.min(8, c.items[i].planSets + d)); return rerender();
     case 'ov-del': if (logged(c.items[i]).length) return;
-      if (liveToday(c) && !c.items[i].added && c.items[i].id !== 'cardio') learnToast(E.learnChoice(state, { rejected: c.items[i].orig || c.items[i].id, home: !!c.home, today: today() }), c.home);
+      // Elimina non cambia le priorità: si toglie per mancanza di tempo o per fare altro, le serie restano in arretrato
       c.items.splice(i, 1); c.cur = Math.min(c.cur, Math.max(0, E.groupItems(c.items).length - 1)); return rerender();
     case 'ov-move': {
       const j = i + d; if (j < 0 || j >= c.items.length) return;

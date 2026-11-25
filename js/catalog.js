@@ -639,6 +639,15 @@ export const DEFAULT_PLAN = {
   avambracci:  { 'Seated_Dumbbell_Palms-Up_Wrist_Curl': 3, 'Seated_Dumbbell_Palms-Down_Wrist_Curl': 2 },
 };
 
+// Zone dello stesso muscolo che contano per l'estetica (doc di ricerca, "Modifiche in palestra"): se una zona resta
+// scoperta per 2 sedute di quel muscolo, anche per un cambio, la seduta dopo sceglie un esercizio che la copre.
+// Il capo lungo del tricipite cresce di più con il braccio sopra la testa (Maeo 2023).
+export const ZONES = {
+  petto: { name: 'petto alto', ids: ['Leverage_Incline_Chest_Press', 'Smith_Machine_Incline_Bench_Press', 'Incline_Dumbbell_Press', 'Low_Cable_Crossover', 'Push-Ups_With_Feet_Elevated'] },
+  tricipiti: { name: 'capo lungo', ids: ['Cable_Rope_Overhead_Triceps_Extension', 'Standing_Dumbbell_Triceps_Extension'] },
+  bicipiti: { name: 'brachiale', ids: EXERCISES.filter(e => e.muscle === 'bicipiti' && e.also?.includes('brachiale')).map(e => e.id) },
+};
+
 export const EQUIP_GROUPS = [
   { label: 'Macchine', eq: ['macchina'] },
   { label: 'Pesi liberi', eq: ['manubri', 'bilanciere'] },
