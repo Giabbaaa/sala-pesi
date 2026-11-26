@@ -1385,10 +1385,13 @@ export const carbs = n => Math.max(0, Math.round((n.kcal - n.protein * 4 - n.fat
 // ---------- Mensa (Nutreetion Lab) ----------
 // mensa.json lo scrive ogni lunedì l'automazione su GitHub (tools/mensa.mjs): calorie e macro sono stime dagli ingredienti.
 const monday = k => addDays(k, -((parseDay(k).getDay() + 6) % 7));
-// Il menu vale per la settimana in cui è stato letto l'ultima volta.
+// Il menu vale per la sua settimana (week: il lunedì; un menu nuovo letto nel weekend vale dal lunedì dopo).
+// I file vecchi senza week: la settimana in cui è stato letto l'ultima volta.
 export function mensaFor(menu, day = dayKey()) {
-  const ref = menu?.checked || menu?.updated;
-  if (!ref || !menu.dishes?.length) return null;
+  if (!menu?.dishes?.length) return null;
+  if (menu.week) return menu.week === monday(day) ? menu : null;
+  const ref = menu.checked || menu.updated;
+  if (!ref) return null;
   return monday(dayKey(new Date(ref))) === monday(day) ? menu : null;
 }
 export const proteinIndex = d => d.kcal ? d.p * 100 / d.kcal : 0;   // g di proteine ogni 100 kcal

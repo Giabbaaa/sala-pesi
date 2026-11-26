@@ -125,6 +125,13 @@ const old = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null;
 const same = old && JSON.stringify(old.dishes) === JSON.stringify(dishes);
 out.updated = same ? old.updated : new Date().toISOString();
 out.checked = new Date().toISOString();   // l'app mostra il menu solo se letto da poco
+// La settimana del menu (il suo lunedì, ora italiana). Il sito cambia menu già il sabato:
+// un menu nuovo letto sabato o domenica vale per la settimana che inizia lunedì.
+const romeDay = d => new Date(d).toLocaleDateString('sv-SE', { timeZone: 'Europe/Rome' });
+const plusDays = (k, n) => { const d = new Date(k + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const weekFor = d => { const k = romeDay(d), w = new Date(k + 'T12:00:00Z').getUTCDay(); return w === 6 || w === 0 ? plusDays(k, w === 6 ? 2 : 1) : plusDays(k, 1 - w); };
+const thisWeek = weekFor(Date.now()), weekend = [0, 6].includes(new Date(romeDay(Date.now()) + 'T12:00:00Z').getUTCDay());
+out.week = !same ? thisWeek : weekend ? (old.week || weekFor(old.updated)) : thisWeek;
 writeFileSync(file, JSON.stringify(out, null, 1) + '\n');
 console.log(same ? 'Menu invariato' : 'Menu aggiornato');
 for (const d of dishes) console.log(`${d.name} · ${d.kcal} kcal · P ${d.p} · C ${d.c} · G ${d.f}${d.unknown.length ? ' · sconosciuti: ' + d.unknown.join(', ') : ''}`);

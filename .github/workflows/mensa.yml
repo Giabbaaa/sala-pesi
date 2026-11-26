@@ -1,9 +1,12 @@
 name: Menu mensa
-# Ogni lunedì legge il menu della mensa (Nutreetion Lab), stima calorie e proteine dei piatti
+# Dal sabato (quando il sito cambia menu) al lunedì legge il menu della mensa (Nutreetion Lab), stima calorie e proteine dei piatti
 # e aggiorna mensa.json, che l'app scarica. Si può avviare anche a mano da Actions.
 on:
   schedule:
-    - cron: '0 5 * * 1'   # lunedì alle 6 (ora italiana d'inverno)
+    - cron: '0 7 * * 6'   # sabato alle 8 (ora italiana d'inverno): il sito cambia menu già il sabato
+    - cron: '0 15 * * 6'  # sabato pomeriggio, se il menu esce più tardi
+    - cron: '0 9 * * 0'   # domenica
+    - cron: '0 5 * * 1'   # lunedì alle 6
     - cron: '0 9 * * 3'   # mercoledì: un controllo in più se il menu esce in ritardo
   workflow_dispatch:
 permissions:

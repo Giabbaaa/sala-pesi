@@ -1,5 +1,5 @@
 // Service worker: tutto in cache per funzionare offline in palestra.
-const VERSION = 'v1.21';
+const VERSION = 'v1.22';
 const ASSETS = [
 "./",
 "index.html",
