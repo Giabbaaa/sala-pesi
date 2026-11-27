@@ -424,24 +424,46 @@ function sessionLoad(s) {
       const x = L[m] = L[m] || { n: 0, lim: false };
       x.n += sets.length * w;
       if (w >= 1 && (s.sim || sets.some(z => z.eff === 'limite'))) x.lim = true;
+      if (w >= 1) x.nl = (x.nl || 0) + (s.sim ? 1 : sets.filter(z => z.eff === 'limite').length);   // serie dirette al limite
     }
   }
   return L;
 }
-// Lavoro duro (3 o più serie effettive, oppure una al limite): il muscolo è pronto dal secondo giorno dopo.
-// Lavoro leggero (1–2 serie, nessuna al limite): pronto il giorno dopo, al massimo 2 serie (Morán-Navarro 2017).
+// Il recupero si conta in ore, dall'inizio della seduta all'ora in cui ti alleni (Morán-Navarro 2017, Schoenfeld 2016):
+// lavoro duro (3 o più serie effettive, oppure una al limite) → 48 ore di riposo per quel muscolo;
+// lavoro leggero (1–2 serie, nessuna al limite) → nelle 48 ore al massimo 2 serie;
+// lavoro molto duro (6 o più serie, almeno 4 al limite) → anche fra 48 e 72 ore la metà delle serie.
 const isHard = x => !!x && (x.n >= 3 - 1e-9 || x.lim);
+const isVeryHard = x => !!x && x.n >= 6 - 1e-9 && (x.nl || 0) >= 4;
+// Le ore si contano da inizio a inizio seduta, con 2 ore di margine (arrivare un po' prima non cambia niente).
+const HOUR = 36e5, REST_H = 46, HALF_H = 70;
+// Ora abituale di inizio (minuti dalla mezzanotte): la mediana delle ultime 6 sedute vere; senza storia le 18.
+export function usualStart(state) {
+  const xs = state.sessions.filter(s => !s.sim && counts(s) && s.start).slice(-6)
+    .map(s => { const d = new Date(s.start); return d.getHours() * 60 + d.getMinutes(); }).sort((a, b) => a - b);
+  return xs.length ? xs[Math.floor((xs.length - 1) / 2)] : 18 * 60;
+}
+// L'ora di una seduta che si compone adesso: oggi è adesso, un altro giorno l'ora abituale
+const sessionTime = (state, k, now) => k === dayKey(new Date(now)) ? now : parseDay(k).getTime() + usualStart(state) * 60000;
+// Quando ci si allena il giorno k: all'ora abituale (oggi non prima di adesso)
+export function planTime(state, k, now = Date.now()) {
+  const t = parseDay(k).getTime() + usualStart(state) * 60000;
+  return k === dayKey(new Date(now)) ? Math.max(t, now) : t;
+}
 
 // Storia recente: lavoro per giorno, giorni con una seduta che conta nel ritmo, giorni con qualcosa di segnato
 function recent(state, today) {
-  const from = addDays(today, -8), H = { loads: new Map(), hard: new Set(), any: new Set() };
+  const from = addDays(today, -8), H = { loads: new Map(), at: new Map(), hard: new Set(), any: new Set() };
   for (const s of state.sessions) {
     if (s.date < from) continue;
     H.any.add(s.date);
     if (counts(s)) H.hard.add(s.date);
     const acc = H.loads.get(s.date) || {};
-    for (const [m, x] of Object.entries(sessionLoad(s))) { const a = acc[m] = acc[m] || { n: 0, lim: false }; a.n += x.n; a.lim = a.lim || x.lim; }
+    for (const [m, x] of Object.entries(sessionLoad(s))) { const a = acc[m] = acc[m] || { n: 0, lim: false, nl: 0 }; a.n += x.n; a.lim = a.lim || x.lim; a.nl += x.nl || 0; }
     H.loads.set(s.date, acc);
+    // inizio della seduta (le sedute vecchie senza orari: le 18 di quel giorno); due sedute lo stesso giorno: l'ultima
+    const start = s.start || parseDay(s.date).getTime() + 18 * HOUR;
+    H.at.set(s.date, Math.max(H.at.get(s.date) || 0, start));
   }
   return H;
 }
@@ -453,20 +475,32 @@ function sumLoads(H, from, to) {
 
 // I numeri di ogni muscolo per il giorno k (doc di ricerca, "I tre numeri di ogni muscolo"):
 // arretrato = obiettivo dei 7 giorni meno le serie fatte davvero nei 6 giorni prima (un esercizio tolto o saltato
-// non conta); pronto = cap (lavoro duro ieri 0, leggero ieri 2); peso = priorità. Con il ritmo nella finestra
-// (al massimo "sedute" ogni 7 giorni) ogni seduta piena dà circa obiettivo/sedute, una seduta a metà il doppio.
-function dayCtx(state, H, k) {
+// non conta); pronto = cap (in ore: lavoro duro da meno di 48 ore 0, leggero 2, molto duro da 48–72 ore metà);
+// peso = priorità. Con il ritmo nella finestra (al massimo "sedute" ogni 7 giorni) ogni seduta piena dà circa
+// obiettivo/sedute, una seduta a metà il doppio. T: l'ora della seduta (adesso, o l'ora abituale per un giorno futuro).
+function dayCtx(state, H, k, T = planTime(state, k)) {
   const P = state.settings.priority;
   const win7 = sumLoads(H, addDays(k, -6), addDays(k, -1));
-  const y = H.loads.get(addDays(k, -1)) || {};
-  const target = {}, base = {}, cap = {}, ahead = {};
+  const target = {}, base = {}, cap = {}, ahead = {}, half = {}, wait = {};
+  let relax = Infinity;    // la prima ora dopo T in cui un limite di recupero si allenta (per aggiornare la seduta)
   for (const m of MUSCLE_ORDER) {
     target[m] = targetFor(state, m);
     base[m] = TARGETS[P[m] || 'normale'][0];
-    cap[m] = isHard(y[m]) ? 0 : y[m]?.n > 0 ? 2 : 10;
-    ahead[m] = 0;
+    cap[m] = 10; ahead[m] = 0;
+    for (const [d, L] of H.loads) {
+      const x = L[m], end = H.at.get(d);   // end: l'inizio di quella seduta
+      if (!x || d >= k || !end) continue;
+      const h = (T - end) / HOUR;
+      if (h < REST_H && x.n > 0) {
+        cap[m] = Math.min(cap[m], isHard(x) ? 0 : 2);
+        wait[m] = Math.max(wait[m] || 0, Math.ceil(REST_H - h));
+        relax = Math.min(relax, end + REST_H * HOUR);
+      }
+      if (h < HALF_H && isVeryHard(x)) { half[m] = true; relax = Math.min(relax, end + (h < REST_H ? REST_H : HALF_H) * HOUR); }
+    }
+    if (half[m]) cap[m] = Math.min(cap[m], Math.max(2, Math.round(Math.min(target[m] - win7[m], target[m] * 0.6, 10) / 2)));
   }
-  return { freq: freqOf(state), done: win7, win7, target, base, cap, ahead };
+  return { freq: freqOf(state), done: win7, win7, target, base, cap, ahead, half, wait, T, relax: relax < Infinity ? relax : null };
 }
 
 // Serie di oggi per un muscolo: l'arretrato, al massimo 10 e il 60% dell'obiettivo, poi il limite del recupero.
@@ -479,10 +513,10 @@ function needOf(state, ctx, m) {
 
 // Il piano del giorno k, muscolo per muscolo: tipo di seduta e serie per muscolo (need).
 // pair: domani è prevista un'altra seduta (coppia di giorni) → oggi un gruppo, domani l'altro.
-export function planDay(state, k, { H = null, pair = false, home = false } = {}) {
+export function planDay(state, k, { H = null, pair = false, home = false, at = null } = {}) {
   H = H || recent(state, k);
   const st = home ? homeState(state) : state, P = state.settings.priority;
-  const ctx = dayCtx(state, H, k);
+  const ctx = dayCtx(state, H, k, at ?? planTime(state, k));
   const can = m => poolOf(st, m).length > 0;
   const y1 = H.loads.get(addDays(k, -1)) || {}, y2 = H.loads.get(addDays(k, -2)) || {};
   const yHard = H.hard.has(addDays(k, -1)), third = yHard && H.hard.has(addDays(k, -2));
@@ -537,7 +571,7 @@ export function planDay(state, k, { H = null, pair = false, home = false } = {})
     need[m] = Math.max(need[m], Math.min(ctx.cap[m], 10, ctx.target[m] * 0.6, ctx.target[m] * 1.2 - ctx.win7[m]));
   }
   const useful = MUSCLE_ORDER.reduce((a, m) => a + (main(m) ? need[m] : 0), 0);
-  if (useful < 8) return focus(yHard || base.rested.length ? 'il resto ha lavorato ieri' : 'pochi muscoli da recuperare');
+  if (useful < 8) return focus(yHard || base.rested.length ? 'il resto ha lavorato da meno di 48 ore' : 'pochi muscoli da recuperare');
   return { ...base, kind, group, need };
 }
 
@@ -549,7 +583,7 @@ export function planDay(state, k, { H = null, pair = false, home = false } = {})
 // I giorni scelti in Piano → Ritmo valgono a parità: si aspetta al massimo un giorno per arrivare a uno di quelli,
 // e due giorni preferiti di fila diventano spinta e tirata. Da soli non creano mai sedute. Due giorni di fila non
 // previsti (seduta in più) vanno bene lo stesso: il secondo prende i muscoli che il primo ha lasciato riposare.
-export function calendar(state, today = dayKey(), count = 6) {
+export function calendar(state, today = dayKey(), count = 6, now = Date.now()) {
   const H = recent(state, today), prefs = state.settings.days || [], freq = freqOf(state);
   const pref = k => prefs.includes(weekday(k));
   const alta = MUSCLE_ORDER.filter(m => state.settings.priority[m] === 'alta');
@@ -565,15 +599,15 @@ export function calendar(state, today = dayKey(), count = 6) {
   const allowed = k => !(H.hard.has(addDays(k, -1)) && H.hard.has(addDays(k, -2))) && gapOk(k) && inWin(k) < freq + (behind(k) ? 1 : 0);
   const useful = (k, pair = false) => {
     if (!allowed(k)) return null;
-    const p = planDay(state, k, { H, pair });
+    const p = planDay(state, k, { H, pair, at: planTime(state, k, now) });
     return RESTING.includes(p.kind) ? null : p;
   };
   const add = (k, p) => {
     const L = {};
-    for (const m of MUSCLE_ORDER) if (p.need[m] >= 1) L[m] = { n: Math.max(2, Math.round(p.need[m])), lim: true };
-    H.loads.set(k, L); H.hard.add(k);
+    for (const m of MUSCLE_ORDER) if (p.need[m] >= 1) { const n = Math.max(2, Math.round(p.need[m])); L[m] = { n, lim: true, nl: Math.ceil(n / 3) }; }
+    H.loads.set(k, L); H.hard.add(k); H.at.set(k, planTime(state, k, now));
   };
-  const drop = k => { H.loads.delete(k); H.hard.delete(k); };
+  const drop = k => { H.loads.delete(k); H.hard.delete(k); H.at.delete(k); };
   const days = [], pair = new Set(), plans = {};
   let k = H.any.has(today) ? addDays(today, 1) : today;
   for (let i = 0; i < 90 && days.length < count; i++, k = addDays(k, 1)) {
@@ -871,8 +905,8 @@ export function compose(state, today = dayKey(), now = Date.now(), duration = nu
   const dur = duration || usualMinutes(state);
   const warm = warmMin(dur);
   // coppia di giorni prevista dal calendario (oggi e domani): oggi un gruppo, domani l'altro
-  const cal = calendar(state, today, 2);
-  const plan = planDay(state, today, { pair: cal.days[0] === today && cal.pair.has(today) });
+  const cal = calendar(state, today, 2, now);
+  const plan = planDay(state, today, { pair: cal.days[0] === today && cal.pair.has(today), at: sessionTime(state, today, now) });
   let res;
   if (plan.kind === 'cardio') res = cardioDay(dur);
   else if (nonDeload < 4 && plan.kind !== 'focus') {
@@ -889,8 +923,13 @@ export function compose(state, today = dayKey(), now = Date.now(), duration = nu
     reason = `Scarico (${4 - state.cycle.deloadLeft} di 3): metà serie, stessi carichi, sforzo facile o giusto`;
   }
   const minutes = itemMinutes(res.items, warm);
-  return { date: today, items: res.items, reason, kind: plan.kind, seed: res.seed || null, deload, cycle: cyc.n, minutes, duration: dur, want: res.want || null, cur: 0, view: 'list' };
+  // relax: da quell'ora un muscolo ha recuperato; se la seduta non è ancora iniziata né toccata, l'app la rifà
+  return { date: today, items: res.items, reason, kind: plan.kind, seed: res.seed || null, deload, cycle: cyc.n, minutes, duration: dur, want: res.want || null, cur: 0, view: 'list',
+    relax: plan.ctx.relax, fp: itemsPrint(res.items) };
 }
+
+// L'impronta degli esercizi di una seduta (per sapere se è stata cambiata a mano)
+export const itemsPrint = items => (items || []).map(i => i.id + ':' + (i.planSets || i.minutes || 0) + (i.ss || '')).join('|');
 
 // La riga del perché: tipo di seduta e motivo ("Tirata: petto e spalle riposano da ieri", "Focus addome: saltato
 // nelle ultime 2 sedute", "Cardio e recupero: terzo giorno di fila"), poi i dettagli.
@@ -924,7 +963,7 @@ function reasonFor(state, plan, items, { cut = 0, dur = 60, seed = null } = {}) 
   else if (plan.kind === 'spinta' || plan.kind === 'tirata') {
     const other = plan.kind === 'spinta' ? 'tirata' : 'spinta';
     const r = [...new Set(GROUPS[other].filter(m => plan.ctx.cap[m] === 0).map(NICK))].slice(0, 2);
-    why = r.length ? `${listIt(r)} ${r.length > 1 || r[0] === 'braccia' || r[0] === 'spalle' ? 'riposano' : 'riposa'} da ieri` : '';
+    why = r.length ? `${listIt(r)} ${r.length > 1 || r[0] === 'braccia' || r[0] === 'spalle' ? 'riposano' : 'riposa'} (meno di 48 ore)` : '';
   } else {
     const behind = MUSCLE_ORDER.filter(m => P[m] !== 'minima' && plan.need[m] >= 2 && has(m)).sort((a, b) => plan.need[b] / plan.ctx.target[b] - plan.need[a] / plan.ctx.target[a]);
     const names = [...new Set(behind.map(NICK))].slice(0, 2);
@@ -1331,7 +1370,7 @@ export function forecast(state, day, todayPlan = null, today = dayKey()) {
   const rec = recommendedDays(state, today, 12).filter(k => k <= day);
   if (!rec.includes(day)) return null;
   const sim = { ...state, sessions: [...state.sessions], cycle: { ...state.cycle } };
-  const at = k => parseDay(k).getTime() + 18 * 36e5;
+  const at = k => parseDay(k).getTime() + usualStart(state) * 60000;
   for (const k of rec) {
     const plan = k === today && todayPlan ? todayPlan : compose(sim, k, at(k));
     if (k === day) return plan;
@@ -1479,7 +1518,7 @@ export function homeItem(state, id, sets, today) {
 export function composeHome(state, today = dayKey(), now = Date.now(), kind = 'mini') {
   const hs = homeState(state);
   if (kind === 'full') {
-    const plan = planDay(state, today, { home: true });
+    const plan = planDay(state, today, { home: true, at: sessionTime(state, today, now) });
     const res = plan.kind === 'cardio' ? { items: [] } : dynamicSession(hs, today, now, 45, plan);
     const items = res.items.filter(i => i.id !== 'cardio').map(i => { const h = homeItem(hs, i.id, i.planSets, today); return { ...h, ss: i.ss, note: i.note?.startsWith('Per il') ? i.note : h.note }; });
     return { date: today, items, reason: 'A casa al posto della palestra · ' + reasonFor(hs, plan, items).split(' · ')[0], home: 'full', kind: plan.kind, forced: true, deload: false, cycle: state.cycle.n,

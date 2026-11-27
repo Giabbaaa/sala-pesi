@@ -309,7 +309,18 @@ const fromSession = (s, date) => ({ date, reason: s.home ? 'Allenamento a casa' 
 
 function ensureCurrent() {
   const c = state.current, t = today();
-  if (c && c.date === t) return;
+  if (c && c.date === t) {
+    // sono passate le 48 ore di un muscolo e la seduta non è iniziata né cambiata a mano: si rifà con i muscoli pronti
+    if (c.relax && Date.now() >= c.relax && !c.home && !c.free && !hasLogs(c) && c.fp === E.itemsPrint(c.items)) {
+      const n = E.compose(state, t, Date.now(), c.duration);
+      if (n.fp !== c.fp) {
+        Object.assign(n, { forced: c.forced, minutes: E.planMinutes(state, n) }); state.current = n;
+        setTimeout(() => toast('Seduta aggiornata: altri muscoli hanno recuperato'), 0);
+      } else c.relax = n.relax;
+      save();
+    }
+    return;
+  }
   const s = todaySession();
   state.current = s ? fromSession(s, t) : E.compose(state, t, Date.now(), ui.dur?.date === t ? ui.dur.min : null);
   state.current.minutes = E.planMinutes(state, state.current);
@@ -877,6 +888,7 @@ function viewPiano() {
   <h2>Ritmo</h2><section class="card stack">
     <div class="row between"><span>Sedute ogni 7 giorni</span><span class="seg">${[2, 3, 4].map(n => `<button class="${E.freqOf(state) === n ? 'on' : ''}" data-act="freq" data-v="${n}">${n}</button>`).join('')}</span></div>
     <p class="small muted">Una in più se sei indietro, mai tre giorni di fila. Il calendario si ricalcola dopo ogni allenamento.</p>
+    <p class="small muted">Di solito ti alleni verso le ${(m => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`)(E.usualStart(state))}: un muscolo lavorato duro riposa 48 ore, da inizio a inizio seduta.</p>
     <p class="small muted">Giorni preferiti</p>
     <div class="chips week">${[1, 2, 3, 4, 5, 6, 0].map(d => `<button class="${s.days.includes(d) ? 'on' : ''}" data-act="pday" data-v="${d}">${E.DAY_NAMES[d].slice(0, 3)}</button>`).join('')}</div>
     <p class="small muted">${s.days.length ? 'A parità l’app sceglie questi giorni. Due giorni di fila diventano spinta e tirata.' : 'Nessuno: i giorni li propone l’app.'}</p>
@@ -1074,7 +1086,7 @@ function viewImpostazioni() {
         <button class="ghost" data-act="snap" data-k="${x.k}">${ui.confirmSnap === x.k ? 'Conferma' : 'Ripristina'}</button></div>`; }).join('')}` : ''}
     <button class="danger" style="margin-top:14px" data-act="reset">${ui.confirmReset ? 'Tocca di nuovo per cancellare tutto' : 'Cancella tutti i dati'}</button>
   </section>
-  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.22 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
+  <p class="small muted" style="text-align:center;margin-top:16px">Sala Pesi · versione 1.23 · dati formato ${E.SCHEMA}<br>Immagini esercizi: Free Exercise DB (pubblico dominio)</p>`;
 }
 
 // I manubri di casa: peso del manico e dischi (servono per i pesi delle sedute a casa)
